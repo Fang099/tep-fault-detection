@@ -1,0 +1,8 @@
+# Data and training outputs stay out of the repo (too large)
+dataset/
+*.csv
+*.parquet
+outputs*/
+*.joblib
+__pycache__/
+.ipynb_checkpoints/
