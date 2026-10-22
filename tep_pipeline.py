@@ -84,7 +84,8 @@ parser.add_argument("--selection-far", type=float, default=0.05,
 parser.add_argument("--test-runs-per-fault", type=int, default=100,
                     help="faulty test runs used per fault (the full faulty test file is ~10M rows)")
 parser.add_argument("--final-test", action="store_true", help="retrain the chosen models and evaluate on test")
-parser.add_argument("--force-retrain", action="store_true", help="retrain models even if already exported")
+parser.add_argument("--force-retrain", action="store_true",
+                    help="retrain the families listed in --families even if already exported (others are kept as they are)")
 args = parser.parse_args()
 
 # ---- Paths ---------------------------------------------------------------------------------------
@@ -132,6 +133,10 @@ ADA_SAMPLE = 0.25         # AdaBoost rounds can't run in parallel, so it trains 
 XGB_DEPTHS = [2, 4, 6, 8]
 XGB_ROUNDS = [10, 25, 50, 100, 200]
 LEARNING_RATE = 0.1       # gradient boosting and XGBoost
+# L2 penalty on leaf values for gradient boosting. scikit-learn's default is 0, which let multiclass diagnosis
+# diverge at depth 6-8 (a leaf whose rows already had near-zero probability for a fault got a near-zero curvature
+# term, so its update for that fault exploded). XGBoost's default is 1, so this matches it.
+GB_L2 = 1.0
 
 FAMILIES = [f.strip() for f in args.families.split(",") if f.strip()]
 unknown = set(FAMILIES) - set(ALL_FAMILIES)
@@ -477,7 +482,7 @@ def fit_family(task, family, depth, X, y, Xv):
 
     if family == "gb":
         m = HistGradientBoostingClassifier(max_iter=max(GB_ROUNDS), max_depth=depth, learning_rate=LEARNING_RATE,
-                                           early_stopping=False, random_state=SEED).fit(X, y)
+                                           l2_regularization=GB_L2, early_stopping=False, random_state=SEED).fit(X, y)
         secs = time.time() - t0
         out = []
         for k, p in enumerate(m.staged_predict_proba(Xv), start=1):
@@ -547,7 +552,7 @@ def build_tree_model(task, family, params):
                                       n_jobs=-1, random_state=SEED)
     if family == "gb":
         return HistGradientBoostingClassifier(max_iter=params["rounds"], max_depth=d, learning_rate=LEARNING_RATE,
-                                              early_stopping=False, random_state=SEED)
+                                              l2_regularization=GB_L2, early_stopping=False, random_state=SEED)
     if family == "ada":
         return AdaBoostClassifier(DecisionTreeClassifier(max_depth=d), n_estimators=params["rounds"], random_state=SEED)
     if family == "xgb":
@@ -601,11 +606,12 @@ def export_diagnosis(mid, label, family, params, pred, fit_seconds, explain, ext
     return clean(summary)
 
 
-def load_existing(task, mid):
+def load_existing(task, mid, family):
+    """Summary of an already exported model, or None if it should be (re)trained this run."""
     path = WEB_DIR / task / f"{mid}.json"
-    if path.exists() and not FORCE_RETRAIN:
-        return describe(json.loads(path.read_text())["summary"])
-    return None
+    if not path.exists() or (FORCE_RETRAIN and family in FAMILIES):
+        return None
+    return describe(json.loads(path.read_text())["summary"])
 
 # ====================================================================================================
 # ## 7. Train and evaluate every model
@@ -623,17 +629,19 @@ def run_linear(task):
     X, y, Xv = TASK_DATA[task]
     configs = [("baseline", None, None)]
     weights = CLASS_WEIGHTS if task == "detection" else [None]
-    if "logreg" in FAMILIES:
-        for cw in weights:
-            configs.append(("none", None, cw))
-            configs += [(p, C, cw) for p in ("l1", "l2") for C in C_GRID]
+    for cw in weights:
+        configs.append(("none", None, cw))
+        configs += [(p, C, cw) for p in ("l1", "l2") for C in C_GRID]
     summaries = []
     for penalty, C, cw in configs:
         mid = model_id(task, penalty, C, cw)
-        existing = load_existing(task, mid)
+        family = "baseline" if penalty == "baseline" else "logreg"
+        existing = load_existing(task, mid, "baseline" if family == "baseline" else "logreg")
         if existing:
             summaries.append(existing)
             continue
+        if family == "logreg" and "logreg" not in FAMILIES:
+            continue                       # not trained this run and not exported before
         model = (DummyClassifier(strategy="most_frequent") if penalty == "baseline"
                  else make_lr(penalty, C, cw, multiclass=(task == "diagnosis")))
         t0 = time.time()
@@ -658,9 +666,12 @@ def run_trees(task, family):
     summaries = []
     for depth in family_depths(family):
         ids = [tree_id(task, family, p) for p in checkpoint_params(family, depth)]
-        existing = [load_existing(task, mid) for mid in ids]
+        existing = [load_existing(task, mid, family) for mid in ids]
         if all(existing):
             summaries += existing
+            continue
+        if family not in FAMILIES:
+            summaries += [e for e in existing if e]     # keep whatever was exported earlier
             continue
         model, checkpoints = fit_family(task, family, depth, X, y, Xv)
         joblib.dump(model, MODEL_DIR / f"{task}_{family}_d{depth}.joblib")
@@ -674,11 +685,14 @@ def run_trees(task, family):
 
 
 def run_task(task):
+    """Train the requested families; families not requested keep their previously exported results."""
     summaries = run_linear(task)
-    for family in FAMILIES:
-        if family != "logreg":
-            t0 = time.time()
-            summaries += run_trees(task, family)
+    for family in ALL_FAMILIES:
+        if family == "logreg":
+            continue
+        t0 = time.time()
+        summaries += run_trees(task, family)
+        if family in FAMILIES:
             print(f"--- {task} {FAMILY_INFO[family]['label']}: {time.time() - t0:.0f}s", flush=True)
     return summaries
 
@@ -739,7 +753,7 @@ def write_manifest(test_results=None):
         "settings": {"C_grid": C_GRID, "class_weights": [c or "none" for c in CLASS_WEIGHTS],
                      "selection_far": SELECTION_FAR, "far_levels": FAR_LEVELS, "consecutive": CONSECUTIVE,
                      "det_stride": DET_STRIDE, "diag_stride": DIAG_STRIDE, "rf_sample": RF_SAMPLE,
-                     "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE},
+                     "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2},
         "families": [{"key": f, **FAMILY_INFO[f]} for f in present],
         "detection": {"models": det_summaries, "best": best_det_id,
                       "best_by_family": best_by_family(det_summaries, "recall"),

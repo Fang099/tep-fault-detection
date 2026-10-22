@@ -118,9 +118,21 @@ function renderThreshold() {
        but every single normal row is a false alarm. This is why F1 alone is misleading here.`
     : `<b>At this threshold</b> the model catches ${pct(r.recall)} of faulty rows while raising a false alarm on
        ${pct(r.far)} of normal rows. ${r.precision > 0.9 ? `Precision stays high (${pct(r.precision)}) because ${pct(v.totalF / (v.totalN + v.totalF), 0)} of rows are faulty anyway,
-       so even a random alarm is usually right.` : ""}${v.B < 40 ? ` <b>This model gives only ${v.B} different scores</b>
-       (a tree has one score per leaf), so the threshold can only move in big steps${r.far === 0 && r.recall === 0 && state.farTarget
-       ? `, and the smallest step above 0% already exceeds ${pct(state.farTarget, 0)} false alarms. Staying within that limit means no alarms at all` : ""}.` : ""}`;
+       so even a random alarm is usually right.` : ""}${coarseNote(v, r)}`;
+}
+
+// Tree models give only a limited set of scores. Deep trees put many rows at exactly their top score, so a
+// false-alarm limit can be impossible to meet without switching alarms off entirely.
+function coarseNote(v, r) {
+  if (isBaseline()) return "";
+  const topShare = v.normal[v.B - 1] / v.totalN;
+  if (state.farTarget && r.far === 0 && r.recall === 0 && topShare > state.farTarget) {
+    return ` <b>No threshold can meet this limit.</b> ${pct(topShare)} of normal rows share this model's highest score
+      (a deep tree gives many rows a score of almost exactly 1), so any alarm at all would exceed ${pct(state.farTarget, 0)} false alarms.
+      This is why the deepest trees score 0% here even though their ROC-AUC is reasonable; a forest averages many trees and avoids it.`;
+  }
+  if (v.B < 40) return ` <b>This model gives only ${v.B} different scores</b> (a tree has one score per leaf), so the threshold can only move in big steps.`;
+  return "";
 }
 
 // ---------- Learn: static formulas ----------

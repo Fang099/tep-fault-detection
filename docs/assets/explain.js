@@ -61,7 +61,7 @@ export function explainer(task, model, manifest) {
         ? M.block(M.t("score"), M.paren(M.i("x")), M.o("="), M.frac(M.t("faulty training rows in the leaf"), M.t("all training rows in the leaf")))
         : M.block(M.t("predicted fault"), M.o("="), M.t("the most common fault among the training rows in the leaf")))}
       <p>With depth ${p.depth} the tree asks at most ${p.depth} questions in a row, so it has at most ${leaves.toLocaleString("en-US")}
-        leaves${det ? ` and so at most ${leaves.toLocaleString("en-US")} different scores. That is why shallow trees give only a few spikes in the
+        leaves${leaves > 10000 ? " (in practice far fewer: every leaf needs training rows, and splitting stops once a leaf is pure)" : ""}${det ? ` and so at most that many different scores. That is why shallow trees give only a few spikes in the
         score chart and the threshold slider jumps in big steps` : ""}. Deeper trees fit the training runs more closely, but past some depth
         they start memorizing those runs instead of learning what a fault looks like.</p>` };
   }
@@ -97,7 +97,14 @@ export function explainer(task, model, manifest) {
         stop helping on new runs.
         ${xgb ? `The last formula is XGBoost's training objective: the log-loss plus a penalty on each tree's number of leaves <i>T<sub>m</sub></i>
         and the size of its leaf values <i>w<sub>m</sub></i>, a built-in ridge-style regularization (defaults λ = 1, γ = 0 are used).` :
-        "This is scikit-learn's histogram version: it bins each sensor's values first, which makes finding splits much faster on large data."}</p>
+        `This is scikit-learn's histogram version: it bins each sensor's values first, which makes finding splits much faster on large data.
+        ${(manifest.settings.gb_l2 ?? 0) > 0
+          ? `Leaf values get an L2 penalty λ = ${manifest.settings.gb_l2}, the same damping XGBoost uses by default. Without it, multiclass
+             diagnosis diverged at depth 6 and 8 on this data: in a leaf where the model was already almost certain a fault was absent,
+             the curvature term in the update was close to zero, so the update for that fault exploded.`
+          : `These results use no penalty on leaf values (scikit-learn's default). For diagnosis at depth 6 and 8 this lets training diverge
+             after about 50 rounds: in a leaf where the model is already almost certain a fault is absent, the curvature term in the update
+             is close to zero, so the update for that fault explodes. XGBoost avoids this with its default penalty λ = 1.`}`}</p>
       ${det ? `<p class="note">The score on the website is <i>p</i>, the boosted total pushed through the same logistic curve as logistic regression.</p>` : ""}` };
   }
 
