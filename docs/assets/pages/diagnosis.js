@@ -3,6 +3,7 @@ import {
   COLORS, FAULTS, faultDesc, pct, num, int, fmtMinutes, tile, esc,
 } from "../site.js";
 import { barChart, heatmap } from "../charts.js";
+import { explainer, renderSensors } from "../explain.js";
 import * as M from "../math.js";
 
 renderChrome();
@@ -36,7 +37,8 @@ async function selectModel(sel, model) {
 
 function render() {
   renderOverall();
-  renderSoftmaxLive();
+  renderExplainer();
+  renderSensorsChart();
   renderMacro();
   renderMatrix();
   renderRecall();
@@ -48,6 +50,18 @@ function selectRow(r) {
   writeSelection(selectionOf(state.model), { fault: state.row != null ? state.row + 1 : null });
   renderMatrix();
   renderRecall();
+  renderSensorsChart();
+}
+
+function renderExplainer() {
+  const ex = explainer("diagnosis", state.model, state.manifest);
+  $("explainer-title").textContent = ex.title;
+  $("model-explainer").innerHTML = ex.html;
+}
+
+function renderSensorsChart() {
+  renderSensors({ chartEl: $("chart-sensors"), titleEl: $("sensors-title"), introEl: $("sensors-intro"),
+                  file: state.file, model: state.model, faultIndex: state.row });
 }
 
 function rowShares() {
@@ -82,7 +96,7 @@ function renderOverall() {
     tile("Faults with recall under 20%", `${poor} / 20`),
     tile("Rows evaluated", int(rows)),
   ].join("");
-  $("callout").innerHTML = m.penalty === "baseline"
+  $("callout").innerHTML = m.family === "baseline"
     ? `<b>The majority baseline</b> names the same fault for every row, so it gets one fault right and the other 19 wrong.`
     : `<b>This model reaches a macro-F1 of ${num(m.val.macro_F1, 3)}</b>, against ${num(base.val.macro_F1, 3)} for the baseline.
        ${good} faults are recognized at least 80% of the time; ${poor} are recognized less than 20% of the time.`;
@@ -90,30 +104,10 @@ function renderOverall() {
 
 // ---------- Learn ----------
 function renderStaticFormulas() {
-  const k = M.i("k");
-  $("f-softmax").innerHTML =
-    M.block(M.sub(M.i("z"), k), M.o("="), M.sub(M.i("w"), M.row(k, M.o(","), M.n(1))), M.sub(M.i("x"), M.n(1)), M.o("+"), M.o("⋯"), M.o("+"),
-            M.sub(M.i("w"), M.row(k, M.o(","), M.n(52))), M.sub(M.i("x"), M.n(52)), M.o("+"), M.sub(M.i("b"), k),
-            M.sp(1.5), M.t("for"), M.sp(0.4), k, M.o("="), M.n(1), M.o(","), M.o("…"), M.o(","), M.n(20)) +
-    M.block(M.sub(M.i("p"), k), M.o("="), M.frac(M.sup(M.i("e"), M.sub(M.i("z"), k)),
-            M.row(M.sum(M.row(M.i("j"), M.o("="), M.n(1)), M.n(20)), M.sup(M.i("e"), M.sub(M.i("z"), M.i("j"))))),
-            M.sp(1.5), M.t("predicted fault"), M.o("="), M.under(M.t("arg max"), k), M.sp(0.2), M.sub(M.i("p"), k));
   $("f-macro").innerHTML =
     M.block(M.sub(M.t("F1"), M.i("k")), M.o("="), M.frac(M.row(M.n(2), M.sub(M.i("P"), M.i("k")), M.sub(M.i("R"), M.i("k"))),
             M.row(M.sub(M.i("P"), M.i("k")), M.o("+"), M.sub(M.i("R"), M.i("k")))),
             M.sp(2), M.t("macro-F1"), M.o("="), M.frac(M.n(1), M.n(20)), M.sum(M.row(M.i("k"), M.o("="), M.n(1)), M.n(20)), M.sub(M.t("F1"), M.i("k")));
-}
-
-function renderSoftmaxLive() {
-  const m = state.model;
-  if (m.penalty === "baseline") {
-    $("softmax-live").innerHTML = `The majority baseline has none of these weights. Every fault has the same number of training rows,
-      so it simply names the first fault, fault 1, for every row.`;
-    return;
-  }
-  $("softmax-live").innerHTML = `That is 20 × 52 = 1,040 weights plus 20 intercepts, 1,060 numbers in all, compared with 53 for detection.
-    ${m.coef_nonzero < 52 ? `This lasso model uses ${m.coef_nonzero} of the 52 sensors for at least one fault; the rest have a zero weight for every fault.` :
-    "This model uses all 52 sensors."}`;
 }
 
 function renderMacro() {

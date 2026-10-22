@@ -1,6 +1,6 @@
 import {
   renderChrome, showError, loadManifest, loadModel, dataNote, detectionView, modelLink,
-  COLORS, FAMILIES, familyOf, faultDesc, pct, num, fmtC, fmtMinutes, esc,
+  COLORS, bestModel, familyOf, familyLabel, settingsText, faultDesc, pct, num, fmtC, fmtMinutes, esc,
 } from "../site.js";
 import { barChart, legend } from "../charts.js";
 
@@ -28,13 +28,18 @@ async function main() {
   $("swap").addEventListener("click", () => { [state.a, state.b] = [state.b, state.a]; update(); });
 }
 
+// Default comparison: the best model overall against the best model of a different family
+// (logistic regression if the winner is a tree model, otherwise the best of the other families).
 function defaults(task) {
-  const models = state.manifest[task].models;
-  const a = state.manifest[task].best;
-  const b = task === "detection"
-    ? models.find(m => m.penalty === "none" && m.class_weight === "none")?.id
-    : models.find(m => m.penalty === "baseline")?.id;
-  return [a, b || models[0].id];
+  const m = state.manifest, a = bestModel(m, task);
+  const famA = familyOf(a);
+  let b = famA !== "logreg" ? bestModel(m, task, "logreg") : null;
+  if (!b) {
+    const others = m[task].models.filter(x => !["baseline", famA].includes(familyOf(x)));
+    b = others.sort((x, y) => (task === "detection" ? y.val.recall - x.val.recall : y.val.macro_F1 - x.val.macro_F1))[0]
+        || m[task].models.find(x => familyOf(x) === "baseline");
+  }
+  return [a.id, b.id];
 }
 
 function setTask(task, a, b) {
@@ -47,7 +52,7 @@ function setTask(task, a, b) {
   state.a = ids.has(a) ? a : da;
   state.b = ids.has(b) ? b : db;
   // Group the menu by model family.
-  const opts = FAMILIES.map(f => {
+  const opts = state.manifest.families.map(f => {
     const items = models.filter(m => familyOf(m) === f.key);
     return items.length ? `<optgroup label="${f.label}">${items.map(m =>
       `<option value="${m.id}">${esc(m.label)}${m.id === state.manifest[task].best ? " (best)" : ""}</option>`).join("")}</optgroup>` : "";
@@ -175,11 +180,9 @@ function renderTable() {
   const det = state.task === "detection";
   const cols = [
     ["Model", m => m.label, "s"],
-    ["Family", m => (familyOf(m) === "baseline" ? "Baseline" : "Logistic regression"), "s"],
-    ...(det ? [["Weighting", m => (m.penalty === "baseline" ? "–" : m.class_weight), "s"]] : []),
-    ["Penalty", m => ({ baseline: "–", none: "none", l1: "lasso", l2: "ridge" }[m.penalty]), "s"],
-    ["C", m => m.C, "n", v => (v == null ? "–" : fmtC(v))],
-    ["Sensors", m => m.coef_nonzero, "n", v => (v == null ? "–" : v)],
+    ["Family", m => familyLabel(state.manifest, familyOf(m)), "s"],
+    ["Settings", m => settingsText(m), "s"],
+    ["Sensors used", m => m.coef_nonzero, "n", v => (v == null ? "–" : v)],
     ...(det ? [
       // At 5% false alarms the baseline (one score for every row) cannot raise any alarm, so it catches 0%.
       ["Caught @5% FA", m => at5(m).recall, "n", pct],
@@ -190,7 +193,7 @@ function renderTable() {
       ["Accuracy", m => m.val.accuracy, "n", pct],
     ]),
   ];
-  const key = det ? 6 : 5;
+  const key = det ? 4 : 4;
   if (!state.sort) state.sort = { col: key, desc: true };
   const { col, desc } = state.sort;
   const models = [...state.manifest[state.task].models].sort((x, y) => {

@@ -25,8 +25,10 @@ One row is one 3-minute time step of one simulation run. The models use only the
   testing) are normal; rows after injection are faulty.
 - **Split:** the training files are split by simulation run, 80% train / 20% validation within each fault type,
   so no run appears on both sides. The test files are used once, at the end.
-- **Models:** logistic regression with no penalty, lasso (L1) and ridge (L2) at several strengths `C`, with and
-  without class weighting (detection), plus majority-class baselines.
+- **Models:** majority-class baselines; logistic regression with no penalty, lasso (L1) and ridge (L2) at several
+  strengths `C`, with and without class weighting (detection); decision trees (depth); random forests (depth, number
+  of trees); gradient boosting, AdaBoost and XGBoost (tree depth, boosting rounds). Forests and boosted models are
+  trained once per depth; smaller forests and fewer rounds are read off the same fit.
 - **Thresholds and model choice:** each detection model's threshold is set so 5% of normal validation rows raise
   an alarm; the best model catches the most faults at that point. The best diagnosis model has the highest
   validation macro-F1.
@@ -46,6 +48,7 @@ One row is one 3-minute time step of one simulation run. The models use only the
 ```bash
 pip install -r requirements.txt
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100      # subset, faster
+python tep_pipeline.py --data-dir path/to/csvs --families tree,rf          # only some model families
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0        # all 500 runs per fault
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test
 ```

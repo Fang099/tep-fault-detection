@@ -32,14 +32,8 @@
     <div class="tiles" id="tiles"></div>
     <p class="callout" id="callout"></p>
     <details class="learn">
-      <summary><span class="learn-tag">Learn</span>One model, twenty scores</summary>
-      <div class="learn-body">
-        <p>For diagnosis, logistic regression keeps a separate set of weights for every fault <i>k</i>. Each set turns the 52 readings into
-          a score <i>z<sub>k</sub></i>, and the softmax function turns the 20 scores into probabilities that add up to 1. The model names the
-          fault with the highest probability:</p>
-        <div class="formula" id="f-softmax"></div>
-        <p id="softmax-live"></p>
-      </div>
+      <summary><span class="learn-tag">Learn</span><span id="explainer-title">How this model names a fault</span></summary>
+      <div class="learn-body" id="model-explainer"></div>
     </details>
     <details class="learn">
       <summary><span class="learn-tag">Learn</span>Macro-F1, worked out with these numbers</summary>
@@ -67,6 +61,12 @@
     <h2>Fault by fault</h2>
     <p class="intro">Recall per fault: the share of each fault's rows the model names correctly. The dashed line is chance (5%).</p>
     <div class="plot"><div id="chart-recall"></div></div>
+  </section>
+
+  <section class="section" id="sensors" data-toc="Which sensors matter">
+    <h2>Which sensors the model relies on</h2>
+    <p class="intro" id="sensors-intro"></p>
+    <div class="plot"><div class="plot-title" id="sensors-title"></div><div id="chart-sensors"></div></div>
   </section>
 
   <section class="section" id="speed" data-toc="How quickly">

@@ -50,17 +50,8 @@
     <p class="callout" id="callout-threshold"></p>
 
     <details class="learn">
-      <summary><span class="learn-tag">Learn</span>How 52 readings become one alarm</summary>
-      <div class="learn-body">
-        <p>Each reading is first standardized: shifted and scaled so that, on the training runs, every variable has mean 0 and
-          standard deviation 1. Logistic regression then adds the readings up with one weight each, giving a single number <i>z</i>
-          (the log-odds of a fault), and squashes it into a probability between 0 and 1:</p>
-        <div class="formula" id="f-logistic"></div>
-        <p id="logistic-live"></p>
-        <div class="plot"><div id="chart-sigmoid"></div></div>
-        <p class="note">Training chooses the weights <i>w</i> and the intercept <i>b</i>. Each weight says how strongly one sensor pushes
-          toward "fault"; the <a href="regularization.html#paths">Regularization</a> page shows them.</p>
-      </div>
+      <summary><span class="learn-tag">Learn</span><span id="explainer-title">How this model turns 52 readings into a score</span></summary>
+      <div class="learn-body" id="model-explainer"></div>
     </details>
     <details class="learn">
       <summary><span class="learn-tag">Learn</span>The metrics, worked out with these numbers</summary>
@@ -123,6 +114,12 @@
       <div class="plot"><div id="chart-faults"></div></div>
       <div class="panel" id="fault-panel"></div>
     </div>
+  </section>
+
+  <section class="section" id="sensors" data-toc="Which sensors matter">
+    <h2>Which sensors the model relies on</h2>
+    <p class="intro" id="sensors-intro"></p>
+    <div class="plot"><div class="plot-title" id="sensors-title"></div><div id="chart-sensors"></div></div>
   </section>
 
   <section class="section" id="speed" data-toc="How quickly">

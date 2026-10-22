@@ -163,7 +163,11 @@
           Any useful model has to beat it.</td><td>None</td></tr>
         <tr><td><b>Logistic regression</b></td><td>Adds up the 52 readings with one learned weight each and turns the sum into a probability.
           A linear model: simple, fast and easy to inspect.</td><td>Class weighting (detection), penalty (none, lasso, ridge), strength C</td></tr>
-        <tr><td class="note">Coming next</td><td class="note">Decision trees and random forests, to test whether non-linear models do better.</td><td></td></tr>
+        <tr><td><b>Decision tree</b></td><td>A chain of yes-or-no questions about the readings. Can capture non-linear patterns and is easy to read.</td><td>Maximum depth</td></tr>
+        <tr><td><b>Random forest</b></td><td>Many trees, each grown on a random sample of rows and sensors, averaged together (bagging).</td><td>Maximum depth, number of trees</td></tr>
+        <tr><td><b>Gradient boosting</b></td><td>Trees built one after another, each correcting the errors of those before it.</td><td>Tree depth, boosting rounds</td></tr>
+        <tr><td><b>AdaBoost</b></td><td>Small trees built one after another, re-weighting the rows the previous trees got wrong, combined by weighted vote.</td><td>Depth of each tree, boosting rounds</td></tr>
+        <tr><td><b>XGBoost</b></td><td>A fast, regularized implementation of gradient boosting.</td><td>Tree depth, boosting rounds</td></tr>
       </tbody></table></div>
   </section>
 
@@ -199,7 +203,7 @@
     <div class="linkgrid">
       <a href="detection.html"><b>Detection</b><span>Move the alarm threshold and see what each model catches.</span></a>
       <a href="diagnosis.html"><b>Diagnosis</b><span>See which faults get confused with which.</span></a>
-      <a href="regularization.html"><b>Regularization</b><span>Lasso and ridge: which sensors survive.</span></a>
+      <a href="regularization.html"><b>Regularization</b><span>Lasso and ridge for logistic regression: which sensors survive.</span></a>
       <a href="compare.html"><b>Compare</b><span>Any two models side by side, and every model ranked.</span></a>
       <a href="results.html"><b>Results</b><span>Test results, findings and limitations.</span></a>
       <a href="reproduce.html"><b>Reproduce</b><span>Run everything yourself.</span></a>

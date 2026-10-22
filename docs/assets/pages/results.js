@@ -1,17 +1,19 @@
 import {
-  renderChrome, showError, loadManifest, loadModel, loadTestModel, bestModel, dataNote, detectionView, findModel,
-  COLORS, pct, num, int, tile, esc,
+  renderChrome, showError, loadManifest, loadModel, loadTestModel, bestModel, dataNote, detectionView, findModel as findAny,
+  familyOf, familyLabel, modelLink, COLORS, pct, num, int, tile, esc,
 } from "../site.js";
 import { barChart, legend } from "../charts.js";
 
 renderChrome();
 const $ = id => document.getElementById(id);
+const findModel = (manifest, task, sel) => findAny(manifest, task, { family: "logreg", ...sel });
 
 main().catch(showError);
 
 async function main() {
   const manifest = await loadManifest();
   $("data-note").innerHTML = dataNote(manifest);
+  renderFamilies(manifest);
   renderFindings(manifest);
   await renderTest(manifest);
 }
@@ -20,6 +22,7 @@ async function main() {
 function renderFindings(manifest) {
   const det = manifest.detection.models, dia = manifest.diagnosis.models;
   const best = bestModel(manifest, "detection"), bestD = bestModel(manifest, "diagnosis");
+  const lrDet = bestModel(manifest, "detection", "logreg"), lrDia = bestModel(manifest, "diagnosis", "logreg");
   const base = det.find(m => m.penalty === "baseline");
   const noneU = findModel(manifest, "detection", { penalty: "none", weighting: "none" });
   const noneB = findModel(manifest, "detection", { penalty: "none", weighting: "balanced" });
@@ -29,7 +32,12 @@ function renderFindings(manifest) {
   const noneDia = dia.find(m => m.penalty === "none");
   const lassoSmall = det.filter(m => m.penalty === "l1" && m.coef_nonzero > 0).sort((a, b) => a.coef_nonzero - b.coef_nonzero)[0];
 
+  const nonlinear = familyOf(best) !== "logreg" && lrDet;
   const items = [
+    nonlinear ? `<b>Non-linear models do better than logistic regression.</b> The best detection model, ${esc(best.label)}, catches
+     ${pct(best.val.recall)} of faulty rows at 5% false alarms against ${pct(lrDet.val.recall)} for the best logistic regression.
+     ${lrDia && familyOf(bestD) !== "logreg" ? `For diagnosis, ${esc(bestD.label)} reaches macro-F1 ${num(bestD.val.macro_F1, 3)} against
+     ${num(lrDia.val.macro_F1, 3)}.` : ""} Some faults change the readings in ways no single weighted sum can separate.` : "",
     `<b>Accuracy and F1 are misleading here.</b> The majority baseline scores F1 ${num(base.val.F1, 3)} by alarming on every row,
      including every normal one. Compared at 5% false alarms, it catches nothing.`,
     `<b>The best detection model (${esc(best.label)}) catches ${pct(best.val.recall)} of faulty rows at 5% false alarms</b>
@@ -55,6 +63,30 @@ function renderFindings(manifest) {
      See <a href="detection.html#speed">Detection</a>.`,
   ];
   $("findings-list").innerHTML = items.filter(Boolean).map(t => `<li>${t}</li>`).join("");
+}
+
+// ---------- Best model of each family ----------
+function renderFamilies(manifest) {
+  const fams = manifest.families.filter(f => f.key !== "baseline");
+  const rows = fams.map(f => ({ f, det: bestModel(manifest, "detection", f.key), dia: bestModel(manifest, "diagnosis", f.key) }));
+  $("families-table").innerHTML = `<thead><tr><th>Model</th><th>Best detection settings</th><th class="n">Caught at 5% false alarms</th>
+      <th class="n">ROC-AUC</th><th>Best diagnosis settings</th><th class="n">Macro-F1</th></tr></thead><tbody>${
+    rows.map(({ f, det, dia }) => `<tr class="${det?.id === manifest.detection.best || dia?.id === manifest.diagnosis.best ? "highlight" : ""}">
+      <td><b>${esc(f.label)}</b></td>
+      <td>${det ? `<a href="${modelLink("detection.html", det)}">${esc(det.label)}</a>` : "–"}</td>
+      <td class="n">${det ? pct(det.val.recall) : "–"}</td><td class="n">${det ? num(det.val.ROC_AUC, 3) : "–"}</td>
+      <td>${dia ? `<a href="${modelLink("diagnosis.html", dia)}">${esc(dia.label)}</a>` : "–"}</td>
+      <td class="n">${dia ? num(dia.val.macro_F1, 3) : "–"}</td></tr>`).join("")}</tbody>`;
+  legend($("legend-families"), [{ label: "Detection: faults caught at 5% false alarms", color: COLORS.fault },
+                                { label: "Diagnosis: macro-F1", color: COLORS.data }]);
+  barChart($("chart-families"), {
+    categories: rows.map(r => r.f.label),
+    series: [{ name: "det", color: COLORS.fault, values: rows.map(r => r.det?.val.recall ?? null) },
+             { name: "dia", color: COLORS.data, values: rows.map(r => r.dia?.val.macro_F1 ?? null) }],
+    x: { domain: [0, 1], fmt: x => num(x, 1), label: "Validation score (higher is better)" },
+    labelWidth: 150, valueFmt: (x, k, s) => (s.name === "det" ? pct(x) : num(x, 3)),
+    tip: k => `<b>${esc(rows[k].f.label)}</b><br>Detection: ${rows[k].det ? pct(rows[k].det.val.recall) : "–"}<br>Diagnosis: ${rows[k].dia ? num(rows[k].dia.val.macro_F1, 3) : "–"}`,
+  });
 }
 
 // ---------- Final test ----------

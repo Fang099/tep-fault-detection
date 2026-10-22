@@ -1,7 +1,8 @@
 import {
-  renderChrome, showError, loadManifest, loadModel, dataNote, modelBar, readSelection, writeSelection, findModel,
+  renderChrome, showError, loadManifest, loadModel, dataNote, modelBar, readSelection, writeSelection, findModel, familyOf,
   detectionView, logit, PROB_TICKS, COLORS, FAULTS, faultDesc, pct, num, int, fmtMinutes, fmtC, tile, esc,
 } from "../site.js";
+import { explainer, renderSensors } from "../explain.js";
 import { lineChart, barChart, legend } from "../charts.js";
 import * as M from "../math.js";
 
@@ -63,7 +64,9 @@ async function selectModel(sel, model) {
 }
 
 function renderAll() {
+  renderExplainer();
   renderThresholdDependent();
+  renderSensors({ chartEl: $("chart-sensors"), titleEl: $("sensors-title"), introEl: $("sensors-intro"), file: state.file, model: state.model });
   renderSpeed();
   renderWeighting();
   renderAucLive();
@@ -73,7 +76,7 @@ function renderAll() {
 function renderThresholdDependent() {
   $("th").value = state.t;
   renderThreshold();
-  renderLogisticLive();
+  renderThresholdLive();
   renderWorked();
   renderScores();
   renderRoc();
@@ -81,7 +84,7 @@ function renderThresholdDependent() {
   renderFaultPanel();
 }
 
-const isBaseline = () => state.model.penalty === "baseline";
+const isBaseline = () => familyOf(state.model) === "baseline";
 
 // ---------- Alarm threshold and confusion matrix ----------
 function renderThreshold() {
@@ -115,17 +118,13 @@ function renderThreshold() {
        but every single normal row is a false alarm. This is why F1 alone is misleading here.`
     : `<b>At this threshold</b> the model catches ${pct(r.recall)} of faulty rows while raising a false alarm on
        ${pct(r.far)} of normal rows. ${r.precision > 0.9 ? `Precision stays high (${pct(r.precision)}) because ${pct(v.totalF / (v.totalN + v.totalF), 0)} of rows are faulty anyway,
-       so even a random alarm is usually right.` : ""}`;
+       so even a random alarm is usually right.` : ""}${v.B < 40 ? ` <b>This model gives only ${v.B} different scores</b>
+       (a tree has one score per leaf), so the threshold can only move in big steps${r.far === 0 && r.recall === 0 && state.farTarget
+       ? `, and the smallest step above 0% already exceeds ${pct(state.farTarget, 0)} false alarms. Staying within that limit means no alarms at all` : ""}.` : ""}`;
 }
 
 // ---------- Learn: static formulas ----------
 function renderStaticFormulas() {
-  const wx = k => [M.sub(M.i("w"), M.n(k)), M.sub(M.i("x"), M.n(k))];
-  $("f-logistic").innerHTML =
-    M.block(M.i("z"), M.o("="), ...wx(1), M.o("+"), ...wx(2), M.o("+"), M.o("⋯"), M.o("+"), ...wx(52), M.o("+"), M.i("b")) +
-    M.block(M.i("p"), M.o("="), M.frac(M.n(1), M.row(M.n(1), M.o("+"), M.sup(M.i("e"), M.row(M.o("−"), M.i("z")))))) +
-    M.block(M.t("alarm if"), M.sp(0.4), M.i("p"), M.o("≥"), M.i("t"), M.sp(1), M.o("⟺"), M.sp(1), M.i("z"), M.o("≥"),
-            M.t("ln"), M.sp(0.15), M.frac(M.i("t"), M.row(M.n(1), M.o("−"), M.i("t"))));
   $("f-weights").innerHTML =
     M.block(M.i("L"), M.o("="), M.sum(M.row(M.i("i"), M.o("="), M.n(1)), M.i("N")),
             M.sub(M.i("w"), M.sub(M.i("y"), M.i("i"))), M.sp(0.15), M.sub(M.i("ℓ"), M.i("i")),
@@ -138,31 +137,41 @@ function renderStaticFormulas() {
             M.sup(M.paren(M.n(1), M.o("−"), M.paren(M.n(1), M.o("−"), M.i("α")), M.sup(M.i("α"), M.n(3))), M.i("n")));
 }
 
-// ---------- Learn: logistic function at the current threshold ----------
-function renderLogisticLive() {
+// ---------- Learn: how the selected model decides ----------
+function renderExplainer() {
+  const ex = explainer("detection", state.model, state.manifest);
+  $("explainer-title").textContent = ex.title;
+  $("model-explainer").innerHTML = ex.html + (ex.sigmoid
+    ? `<p data-live="threshold"></p><div class="plot"><div id="chart-sigmoid"></div></div>` : "");
+  state.sigmoid = !!ex.sigmoid;
+}
+
+// The logistic curve with the current threshold, for models whose score is a logistic function of a sum
+// (logistic regression: z; gradient boosting and XGBoost: the boosted total F).
+function renderThresholdLive() {
+  const live = $("model-explainer").querySelector('[data-live="threshold"]');
+  if (!state.sigmoid || !live) return;
   const r = state.view.at(state.t);
-  if (isBaseline()) {
-    $("logistic-live").innerHTML = `The majority baseline skips all of this. It gives every row the same probability, the share of faulty
-      rows in training, so a threshold can only switch alarms on for every row or for none.`;
-  } else if (r.threshold == null) {
-    $("logistic-live").innerHTML = `The threshold is above every score, so no row raises an alarm.`;
+  const sym = familyOf(state.model) === "logreg" ? "z" : "F";
+  if (r.threshold == null) {
+    live.innerHTML = `The threshold is above every score, so no row raises an alarm.`;
   } else {
     const t = Math.min(1 - 1e-9, Math.max(1e-9, r.threshold)), zt = Math.log(t / (1 - t));
-    $("logistic-live").innerHTML = `The curve only ever rises, so a threshold on <i>p</i> is the same as a cutoff on <i>z</i>.
-      At the current threshold <i>t</i> = ${num(t, 4)}, an alarm goes off when <i>z</i> ≥ ${num(zt, 2)}.`;
+    live.innerHTML = `The curve only ever rises, so a threshold on <i>p</i> is the same as a cutoff on <i>${sym}</i>.
+      At the current threshold <i>t</i> = ${num(t, 4)}, an alarm goes off when <i>${sym}</i> ≥ ${num(zt, 2)}.`;
   }
   const pts = [];
   for (let z = -8; z <= 8.001; z += 0.1) pts.push([z, 1 / (1 + Math.exp(-z))]);
   const spec = {
     height: 220, margin: { left: 50 },
-    x: { domain: [-8, 8], ticks: [-8, -4, 0, 4, 8], label: "z (log-odds)" },
+    x: { domain: [-8, 8], ticks: [-8, -4, 0, 4, 8], label: sym === "z" ? "z (log-odds)" : "F (boosted total, log-odds)" },
     y: { domain: [0, 1], ticks: [0, 0.25, 0.5, 0.75, 1], label: "p" },
     series: [{ name: "logistic", color: COLORS.data, width: 2.4, points: pts }],
   };
-  if (!isBaseline() && r.threshold != null) {
+  if (r.threshold != null) {
     const t = Math.min(1 - 1e-9, Math.max(1e-9, r.threshold)), zt = Math.log(t / (1 - t));
     spec.hlines = [{ y: t, color: COLORS.amber, label: `t = ${num(t, 3)}`, labelX: "left" }];
-    spec.vlines = [{ x: Math.max(-8, Math.min(8, zt)), color: COLORS.amber, dash: "4 3", label: `alarm when z ≥ ${num(zt, 2)}` }];
+    spec.vlines = [{ x: Math.max(-8, Math.min(8, zt)), color: COLORS.amber, dash: "4 3", label: `alarm when ${sym} ≥ ${num(zt, 2)}` }];
   }
   lineChart($("chart-sigmoid"), spec);
 }
@@ -189,12 +198,16 @@ function renderWorked() {
 // ---------- Learn: class weighting ----------
 function renderWeighting() {
   const { manifest, model } = state;
+  const fam = familyOf(model);
   const f = manifest.dataset.val_fault_share;
   const wN = 1 / (2 * (1 - f)), wF = 1 / (2 * f);
-  const base = isBaseline() ? { penalty: "none", C: null } : model;
+  const base = fam === "logreg" ? model : { penalty: "none", C: null };
   const pair = ["none", "balanced"].map(w => findModel(manifest, "detection", { family: "logreg", penalty: base.penalty, weighting: w, C: base.C }));
   const name = base.penalty === "none" ? "no penalty" : `${base.penalty === "l1" ? "lasso" : "ridge"}, C = ${fmtC(base.C)}`;
-  $("weighting-live").innerHTML = `
+  const note = fam === "logreg" ? "" : `<p><b>Class weighting was only explored for logistic regression.</b> The ${esc(model.label.split(",")[0].toLowerCase())}
+    models here are trained without it; choosing each model's threshold at 5% false alarms deals with the imbalance instead.
+    For reference, here is what weighting does to logistic regression:</p>`;
+  $("weighting-live").innerHTML = note + `
     <p>Here about ${pct(1 - f, 1)} of training rows are normal and ${pct(f, 1)} faulty. Balanced weighting therefore gives each normal row
       a weight of ${num(wN, 2)} and each faulty row ${num(wF, 3)}: missing the point on a normal row costs ${num(wN / wF, 1)} times as much.</p>
     <p>The model mostly responds by moving its intercept <i>b</i>, which slides every score up or down together. The scores change a lot,

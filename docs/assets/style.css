@@ -213,7 +213,8 @@ input[type=range]:disabled { opacity: 0.35; }
   display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end;
 }
 .modelbar .control { margin: 0; }
-.modelbar .lr-settings { display: contents; }
+.modelbar .family-controls { display: contents; }
+.modelbar select { min-width: 210px; font-weight: 500; }
 .modelbar .grow { flex: 1 1 280px; min-width: 240px; }
 .modelbar .baseline-note { flex: 1 1 280px; color: var(--muted); font-size: 14.5px; align-self: center; margin: 0; }
 .modelbar .current {
