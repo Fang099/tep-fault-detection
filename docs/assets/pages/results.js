@@ -90,10 +90,10 @@ async function renderTest(manifest) {
   const vv = detectionView(valFile.val), tv = detectionView(testFile.test);
   const valRec = vv.perFault(vv.indexForThreshold(best.val.threshold));
   const testRec = tv.perFault(tv.indexForThreshold(best.val.threshold));
-  legend($("legend-test"), [{ label: "Validation", color: COLORS.teal }, { label: "Test", color: COLORS.purple }]);
+  legend($("legend-test"), [{ label: "Validation", color: COLORS.data }, { label: "Test", color: COLORS.b }]);
   barChart($("chart-test"), {
     categories: vv.faults.map(f => `Fault ${f}`),
-    series: [{ name: "val", color: COLORS.teal, values: valRec }, { name: "test", color: COLORS.purple, values: testRec }],
+    series: [{ name: "val", color: COLORS.data, values: valRec }, { name: "test", color: COLORS.b, values: testRec }],
     x: { domain: [0, 1], fmt: x => pct(x, 0), label: "Share of the fault's rows caught at the validation threshold" },
     labelWidth: 70, valueFmt: x => pct(x, 0),
   });

@@ -3,34 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Detection | TEP Fault Detection</title>
+<title>Detection | TEP fault monitor</title>
+<script>try{var t=localStorage.getItem("tep-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="assets/style.css">
 <script type="module" src="assets/pages/detection.js"></script>
 </head>
 <body data-page="detection">
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
-  <div class="kicker">Task 1 · Fault detection</div>
   <h1>Is a fault happening right now?</h1>
   <p class="lede">Each model reads one 3-minute snapshot of the 52 process variables and outputs a fault score.
     An alarm goes off when the score passes a threshold. Pick a model, move the threshold, and see what it catches and what it misses.</p>
-  <nav class="toc">
-    <a href="#threshold">1 · The alarm threshold</a>
-    <a href="#scores">2 · Why errors happen</a>
-    <a href="#roc">3 · Every threshold at once</a>
-    <a href="#faults">4 · Fault by fault</a>
-    <a href="#speed">5 · How quickly</a>
-  </nav>
 </div></header>
 
+<div class="layout">
+<aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <p class="note" id="data-note"></p>
+  <p class="data-note" id="data-note"></p>
   <div id="modelbar"></div>
 
-  <section class="card" id="threshold">
-    <h2><span class="num">1</span>The alarm threshold</h2>
+  <section class="section" id="threshold" data-toc="Alarm threshold">
+    <h2>The alarm threshold</h2>
     <p class="intro">Rows above the threshold raise an alarm. Lowering it catches more faults but also raises more false alarms
       on normal operation. Every model on this site is compared at the threshold that gives 5% false alarms on validation data.</p>
     <div class="split">
@@ -41,45 +37,86 @@
       <div class="panel">
         <div class="control">
           <div class="control-head"><span>Threshold on the fault score</span><span class="val" id="th-val"></span></div>
-          <input type="range" id="th" min="0" value="0">
+          <input type="range" id="th" min="0" value="0" aria-label="Alarm threshold">
           <div class="ticks"><span>alarm on everything</span><span>alarm on nothing</span></div>
         </div>
         <div class="control">
           <div class="control-head">Set the false alarm rate to</div>
-          <div class="seg" id="far-buttons"><button data-far="0.01">1%</button><button data-far="0.05">5%</button><button data-far="0.1">10%</button><button data-far="0.2">20%</button></div>
+          <div class="seg" id="far-buttons"><button type="button" data-far="0.01">1%</button><button type="button" data-far="0.05">5%</button><button type="button" data-far="0.1">10%</button><button type="button" data-far="0.2">20%</button></div>
         </div>
         <div class="tiles" id="tiles"></div>
       </div>
     </div>
     <p class="callout" id="callout-threshold"></p>
+
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>How 52 readings become one alarm</summary>
+      <div class="learn-body">
+        <p>Each reading is first standardized: shifted and scaled so that, on the training runs, every variable has mean 0 and
+          standard deviation 1. Logistic regression then adds the readings up with one weight each, giving a single number <i>z</i>
+          (the log-odds of a fault), and squashes it into a probability between 0 and 1:</p>
+        <div class="formula" id="f-logistic"></div>
+        <p id="logistic-live"></p>
+        <div class="plot"><div id="chart-sigmoid"></div></div>
+        <p class="note">Training chooses the weights <i>w</i> and the intercept <i>b</i>. Each weight says how strongly one sensor pushes
+          toward "fault"; the <a href="regularization.html#paths">Regularization</a> page shows them.</p>
+      </div>
+    </details>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>The metrics, worked out with these numbers</summary>
+      <div class="learn-body">
+        <p>Fault is the positive class. TP = faults caught, FN = faults missed, FP = false alarms, TN = normal rows left alone.
+          The numbers below follow the threshold slider.</p>
+        <div class="formula worked" id="worked-metrics"></div>
+        <p class="note" id="worked-note"></p>
+      </div>
+    </details>
   </section>
 
-  <section class="card" id="scores">
-    <h2><span class="num">2</span>Why errors happen: overlapping scores</h2>
+  <section class="section" id="scores" data-toc="Why errors happen">
+    <h2>Why errors happen: overlapping scores</h2>
     <p class="intro">How the model's scores are distributed for normal rows and for faulty rows. Wherever the two overlap, no threshold
       can separate them: anything left of the line is called normal, anything right of it raises an alarm.
-      Click a fault in section 4 to add its rows to this chart.</p>
+      Click a fault in the fault-by-fault chart to add its rows here.</p>
     <div class="plot">
       <div id="legend-scores"></div>
       <div id="chart-scores"></div>
     </div>
     <p class="callout" id="callout-scores"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>What class weighting does to the scores</summary>
+      <div class="learn-body">
+        <p>Training minimizes the total log-loss over all training rows. Balanced weighting multiplies each row's loss by a
+          weight that depends on its class, so that both classes count equally in total:</p>
+        <div class="formula" id="f-weights"></div>
+        <div id="weighting-live"></div>
+      </div>
+    </details>
   </section>
 
-  <section class="card" id="roc">
-    <h2><span class="num">3</span>Every threshold at once: the ROC curve</h2>
+  <section class="section" id="roc" data-toc="Every threshold at once">
+    <h2>Every threshold at once: the ROC curve</h2>
     <p class="intro">Each point on the curve is one threshold: the share of faulty rows caught against the share of normal rows that
-      raise a false alarm. A useless model follows the diagonal. The dot is your current threshold.</p>
+      raise a false alarm. A model that guesses at random follows the diagonal. The dot is your current threshold; click the curve to move it.</p>
     <div class="split">
       <div class="plot"><div id="chart-roc"></div></div>
       <div class="panel"><div class="tiles" id="tiles-roc"></div>
-        <p class="note" style="margin:12px 0 0">PR-AUC summarizes precision against recall over all thresholds. Because 91% of validation rows are
-          faulty, even the majority baseline scores about 0.91 on it, so ROC-AUC and the false alarm rate are more informative here.</p></div>
+        <p class="note" style="margin:12px 0 0">PR-AUC summarizes precision against recall over all thresholds. Because most validation
+          rows are faulty, even the majority baseline scores about 0.91 on it, so ROC-AUC and the false alarm rate say more here.</p></div>
     </div>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>What the area under the curve means</summary>
+      <div class="learn-body">
+        <p>The area under the ROC curve has a direct meaning: pick one faulty row and one normal row at random. The AUC is the
+          chance that the faulty row gets the higher score (ties count as half).</p>
+        <div class="formula" id="f-auc"></div>
+        <p id="auc-live"></p>
+      </div>
+    </details>
   </section>
 
-  <section class="card" id="faults">
-    <h2><span class="num">4</span>Fault by fault</h2>
+  <section class="section" id="faults" data-toc="Fault by fault">
+    <h2>Fault by fault</h2>
     <p class="intro">Share of each fault's rows caught at the current threshold. Some faults barely change the measurements and are
       nearly impossible to see in a single snapshot. Click a fault for details.</p>
     <div class="split">
@@ -88,8 +125,8 @@
     </div>
   </section>
 
-  <section class="card" id="speed">
-    <h2><span class="num">5</span>How quickly is a fault detected?</h2>
+  <section class="section" id="speed" data-toc="How quickly">
+    <h2>How quickly is a fault detected?</h2>
     <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model raises
       3 alarms in a row. Bars show the median over runs; faded bars mean the fault was detected in only some runs.
       These were computed in advance at fixed false alarm rates, so they don't follow the threshold slider.</p>
@@ -97,15 +134,23 @@
       <div class="plot"><div id="chart-speed"></div></div>
       <div class="panel">
         <div class="control"><div class="control-head">False alarm rate</div>
-          <div class="seg" id="speed-far"><button data-far="0.01">1%</button><button data-far="0.05" class="on">5%</button><button data-far="0.1">10%</button></div></div>
+          <div class="seg" id="speed-far"><button type="button" data-far="0.01">1%</button><button type="button" data-far="0.05" class="on">5%</button><button type="button" data-far="0.1">10%</button></div></div>
         <div class="tiles" id="tiles-speed"></div>
       </div>
     </div>
-    <p class="callout"><b>Read long delays with care.</b> At a 5% false alarm rate, a normal process also raises occasional alarms, and over
-      many hours three in a row eventually happen by chance. Faults that are only "detected" after many hours, in some runs, are likely
-      such chance alarms rather than real detections. A reference measured on fault-free runs will be added to separate the two.</p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Why a long delay can be a chance alarm</summary>
+      <div class="learn-body">
+        <p>A normal process also raises alarms, at the false alarm rate <i>α</i>. If those alarms were independent from one 3-minute
+          sample to the next, the chance of three in a row starting at a given sample would be about (1 − <i>α</i>)<i>α</i>³, and the chance
+          of it happening somewhere in a run of <i>n</i> samples is roughly:</p>
+        <div class="formula" id="f-chance"></div>
+        <div id="chance-live"></div>
+      </div>
+    </details>
   </section>
 </main>
+</div>
 <footer></footer>
 </body>
 </html>

@@ -3,41 +3,58 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diagnosis | TEP Fault Detection</title>
+<title>Diagnosis | TEP fault monitor</title>
+<script>try{var t=localStorage.getItem("tep-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="assets/style.css">
 <script type="module" src="assets/pages/diagnosis.js"></script>
 </head>
 <body data-page="diagnosis">
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
-  <div class="kicker">Task 2 · Fault diagnosis</div>
   <h1>Which fault is it?</h1>
   <p class="lede">Once a fault is active, the model reads one snapshot of the 52 variables and names one of the 20 fault types.
     Pick a model and see which faults it recognizes, which it confuses, and how quickly it settles on the right answer.</p>
-  <nav class="toc">
-    <a href="#overall">1 · Overall accuracy</a>
-    <a href="#matrix">2 · What gets confused</a>
-    <a href="#perfault">3 · Fault by fault</a>
-    <a href="#speed">4 · How quickly</a>
-  </nav>
 </div></header>
 
+<div class="layout">
+<aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <p class="note" id="data-note"></p>
+  <p class="data-note" id="data-note"></p>
   <div id="modelbar"></div>
 
-  <section class="card" id="overall">
-    <h2><span class="num">1</span>Overall accuracy</h2>
+  <section class="section" id="overall" data-toc="Overall accuracy">
+    <h2>Overall accuracy</h2>
     <p class="intro">Evaluated on every validation row where a fault is active. All 20 fault types have the same number of rows,
-      so the majority baseline (always guess one fault) is right 5% of the time.</p>
+      so always guessing one fault is right 5% of the time.</p>
     <div class="tiles" id="tiles"></div>
     <p class="callout" id="callout"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>One model, twenty scores</summary>
+      <div class="learn-body">
+        <p>For diagnosis, logistic regression keeps a separate set of weights for every fault <i>k</i>. Each set turns the 52 readings into
+          a score <i>z<sub>k</sub></i>, and the softmax function turns the 20 scores into probabilities that add up to 1. The model names the
+          fault with the highest probability:</p>
+        <div class="formula" id="f-softmax"></div>
+        <p id="softmax-live"></p>
+      </div>
+    </details>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Macro-F1, worked out with these numbers</summary>
+      <div class="learn-body">
+        <p>For each fault, precision asks "when the model names fault <i>k</i>, how often is it right?" (a column of the confusion
+          matrix) and recall asks "of fault <i>k</i>'s rows, how many are named correctly?" (a row). F1 combines the two, and macro-F1
+          averages all 20 with equal weight, so easy faults can't hide hard ones:</p>
+        <div class="formula" id="f-macro"></div>
+        <div id="macro-live"></div>
+      </div>
+    </details>
   </section>
 
-  <section class="card" id="matrix">
-    <h2><span class="num">2</span>What gets confused with what</h2>
+  <section class="section" id="matrix" data-toc="What gets confused">
+    <h2>What gets confused with what</h2>
     <p class="intro">Each row is the true fault, each column the model's answer. Numbers are the percentage of that fault's rows,
       so a perfect model would fill only the diagonal. Click a row to see where its rows end up.</p>
     <div class="split">
@@ -46,14 +63,14 @@
     </div>
   </section>
 
-  <section class="card" id="perfault">
-    <h2><span class="num">3</span>Fault by fault</h2>
+  <section class="section" id="perfault" data-toc="Fault by fault">
+    <h2>Fault by fault</h2>
     <p class="intro">Recall per fault: the share of each fault's rows the model names correctly. The dashed line is chance (5%).</p>
     <div class="plot"><div id="chart-recall"></div></div>
   </section>
 
-  <section class="card" id="speed">
-    <h2><span class="num">4</span>How quickly is the right fault named?</h2>
+  <section class="section" id="speed" data-toc="How quickly">
+    <h2>How quickly is the right fault named?</h2>
     <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model names the correct fault
       3 times in a row. Faded bars mean this happened in only some runs.</p>
     <div class="split">
@@ -64,6 +81,7 @@
     </div>
   </section>
 </main>
+</div>
 <footer></footer>
 </body>
 </html>

@@ -1,12 +1,15 @@
 import {
-  renderChrome, showError, loadManifest, loadModel, dataNote, findModel, modelLink,
-  COLORS, VARIABLES, pct, num, fmtC, tile, esc,
+  renderChrome, showError, loadManifest, loadModel, dataNote, findModel as findAny, modelLink,
+  COLORS, PALETTE, VARIABLES, pct, num, int, fmtC, tile, esc,
 } from "../site.js";
 import { lineChart, barChart, legend } from "../charts.js";
+import * as M from "../math.js";
+
+// Every model on this page is a logistic regression.
+const findModel = (manifest, task, sel) => findAny(manifest, task, { family: "logreg", ...sel });
 
 renderChrome();
 
-const PALETTE = ["#c2410c", "#1d6fa3", "#7c3aed", "#15803d", "#b45309", "#be185d", "#0e7490", "#4d7c0f"];
 const state = { manifest: null, task: "detection", penalty: "l1", weighting: "balanced", fault: "all", ci: 3, token: 0, files: null };
 const $ = id => document.getElementById(id);
 
@@ -23,13 +26,17 @@ async function main() {
   $("path-fault").innerHTML = `<option value="all">All faults (size of each sensor's coefficients)</option>` +
     Array.from({ length: 20 }, (_, i) => `<option value="${i + 1}">Fault ${i + 1}</option>`).join("");
 
-  segment("task", v => { state.task = v; renderPerformance(); loadPaths(); });
+  segment("task", v => { state.task = v; renderPerformance(); renderObjective(); loadPaths(); });
   segment("path-penalty", v => { state.penalty = v; loadPaths(); });
   segment("path-weight", v => { state.weighting = v; loadPaths(); });
   $("path-fault").addEventListener("change", e => { state.fault = e.target.value; renderPaths(); });
-  slider.addEventListener("input", () => { state.ci = +slider.value; renderPaths(); });
+  slider.addEventListener("input", () => { state.ci = +slider.value; renderPaths(); renderObjective(); });
 
+  renderStaticFormulas();
+  $("lambda").addEventListener("input", renderShrink);
+  renderShrink();
   renderPerformance();
+  renderObjective();
   await loadPaths();
 }
 
@@ -154,7 +161,7 @@ function renderPaths() {
   const top = ranked.slice(0, PALETTE.length).map(x => x[0]);
   const series = features.map((f, j) => {
     const k = top.indexOf(j);
-    return { name: f, color: k >= 0 ? PALETTE[k] : "#cbd5e1", width: k >= 0 ? 2.2 : 1, j,
+    return { name: f, color: k >= 0 ? PALETTE[k] : COLORS.faint, width: k >= 0 ? 2.2 : 1, j,
              points: entries.map((e, i) => [e.model.C, vecs[i][j]]) };
   });
   series.sort((a, b) => (top.indexOf(a.j) >= 0) - (top.indexOf(b.j) >= 0));   // draw highlighted lines on top
@@ -184,10 +191,95 @@ function renderPaths() {
   const m = Math.max(...values.map(Math.abs));
   barChart($("chart-top"), {
     categories: shown.map(([j]) => `${features[j]} · ${VARIABLES[features[j]]}`),
-    series: [{ name: "coef", color: COLORS.teal, values }],
+    series: [{ name: "coef", color: COLORS.data, values }],
     x: { domain: values.some(v => v < 0) ? [-m * 1.1, m * 1.1] : [0, m * 1.1], fmt: x => num(x, m < 1 ? 2 : 1),
          label: task === "detection" ? "Coefficient (positive pushes toward 'fault')" : "Coefficient" },
     labelWidth: 330, valueFmt: x => num(x, 3), rowHeight: 22,
     tip: i => `<b>${features[shown[i][0]]}</b>: ${VARIABLES[features[shown[i][0]]]}<br>coefficient ${num(values[i], 4)}`,
   });
+}
+
+// ---------- Learn: the objective and what C changes ----------
+const hat = x => `<mover accent="true">${M.row(x)}${M.o("^")}</mover>`;
+const beta = M.i("β");
+
+function renderStaticFormulas() {
+  const sumN = M.sum(M.row(M.i("i"), M.o("="), M.n(1)), M.i("N"));
+  const l = M.sub(M.i("ℓ"), M.i("i"));
+  const minw = M.under(M.t("min"), M.row(M.i("w"), M.o(","), M.i("b")));
+  $("f-objective").innerHTML =
+    M.block(M.t("Ridge:"), M.sp(0.6), minw, M.sp(0.3), M.frac(M.n(1), M.n(2)), M.sup(M.norm(M.i("w"), 2), M.n(2)), M.o("+"), M.i("C"), sumN, l) +
+    M.block(M.t("Lasso:"), M.sp(0.6), minw, M.sp(0.3), M.norm(M.i("w"), 1), M.o("+"), M.i("C"), sumN, l) +
+    M.block(l, M.o("="), M.o("−"), M.row(M.o("["), M.sub(M.i("y"), M.i("i")), M.t("ln"), M.sp(0.15), M.sub(M.i("p"), M.i("i")), M.o("+"),
+            M.paren(M.n(1), M.o("−"), M.sub(M.i("y"), M.i("i"))), M.t("ln"), M.sp(0.15), M.paren(M.n(1), M.o("−"), M.sub(M.i("p"), M.i("i"))), M.o("]")),
+            M.sp(1), M.t("(log-loss of row"), M.sp(0.3), M.i("i"), M.t(")"));
+  $("f-scaled").innerHTML =
+    M.block(M.frac(M.n(1), M.i("N")), M.sum(M.row(M.i("i"), M.o("="), M.n(1)), M.i("N")), M.sub(M.i("ℓ"), M.i("i")), M.sp(0.3), M.o("+"), M.sp(0.3),
+            M.frac(M.n(1), M.row(M.i("C"), M.o("·"), M.i("N"))), M.sp(0.15), M.o("×"), M.sp(0.15), M.t("penalty"), M.paren(M.i("w")));
+  $("f-shrink").innerHTML =
+    M.block(M.sub(beta, M.t("ridge")), M.o("="), M.frac(hat(beta), M.row(M.n(1), M.o("+"), M.i("λ")))) +
+    M.block(M.sub(beta, M.t("lasso")), M.o("="), M.t("sign"), M.paren(hat(beta)), M.sp(0.2), M.o("·"), M.sp(0.2),
+            M.t("max"), M.paren(M.abs(hat(beta)), M.o("−"), M.i("λ"), M.o(","), M.sp(0.2), M.n(0)));
+}
+
+// Number of training rows each model was fitted on (training runs subsample every k-th time step).
+function trainingRows(task) {
+  const d = state.manifest.dataset, s = state.manifest.settings;
+  if (task === "detection") return d.train_runs * Math.floor(500 / s.det_stride);
+  const faultyRuns = Math.round(d.train_runs * 20 / 21);
+  return faultyRuns * (Math.floor(500 / s.diag_stride) - Math.floor(d.fault_onset.train / s.diag_stride));
+}
+const sci = x => {
+  const e = Math.floor(Math.log10(x)), m = x / 10 ** e;
+  return e >= -2 && e <= 2 ? num(x, Math.max(0, 2 - e)) : `${m.toFixed(1)} × 10<sup>${e < 0 ? "−" : ""}${Math.abs(e)}</sup>`;
+};
+
+function renderObjective() {
+  const { manifest, task } = state;
+  const N = trainingRows(task), grid = manifest.settings.C_grid;
+  const w = task === "detection" ? "balanced" : "none";
+  const metric = m => (m ? (task === "detection" ? pct(m.val.recall) : num(m.val.macro_F1, 3)) : "–");
+  const none = findModel(manifest, task, { penalty: "none", weighting: w });
+  $("objective-live").innerHTML = `
+    <p>${task === "detection" ? "Detection" : "Diagnosis"} models here were trained on <i>N</i> = ${int(N)} rows. Smaller C makes the
+      penalty count for more, ten times more with each step of the slider:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th class="n">C</th><th class="n">Penalty weight 1 / (C·N)</th><th class="n">Ridge${task === "detection" ? ", balanced" : ""}</th>
+        <th class="n">Lasso${task === "detection" ? ", balanced" : ""}</th><th class="n">Lasso sensors</th></tr></thead>
+      <tbody>${grid.map((C, k) => {
+        const r = findModel(manifest, task, { penalty: "l2", weighting: w, C }), l = findModel(manifest, task, { penalty: "l1", weighting: w, C });
+        return `<tr class="${k === state.ci ? "highlight" : ""}"><td class="n">${fmtC(C)}</td><td class="n">${sci(1 / (C * N))}</td>
+          <td class="n">${metric(r)}</td><td class="n">${metric(l)}</td><td class="n">${l ? l.coef_nonzero : "–"}</td></tr>`;
+      }).join("")}
+        <tr><td class="n">∞</td><td class="n">0</td><td class="n" colspan="2" style="text-align:center">no penalty: ${metric(none)}</td><td class="n">52</td></tr></tbody>
+    </table></div>
+    <p style="margin-top:10px">With this many rows, the average loss dominates until the penalty weight grows large, which is why the curves
+      above stay flat for large C and only fall away at the left. It also means the same C regularizes less on more data: with all
+      500 runs per fault, <i>N</i> is about five times larger, so each C will behave roughly like a C five times larger does here.
+      The highlighted row follows the C slider in the coefficient paths below.</p>`;
+}
+
+// ---------- Learn: one-coefficient shrinkage demo ----------
+function renderShrink() {
+  const lam = +$("lambda").value;
+  $("lambda-val").textContent = `λ = ${lam.toFixed(2)}`;
+  const xs = [];
+  for (let x = -3; x <= 3.0001; x += 0.05) xs.push(+x.toFixed(2));
+  const ridge = x => x / (1 + lam), lasso = x => Math.sign(x) * Math.max(Math.abs(x) - lam, 0);
+  legend($("legend-shrink"), [{ label: "No penalty", color: COLORS.faint, dash: true }, { label: "Ridge", color: COLORS.l2 }, { label: "Lasso", color: COLORS.l1 }]);
+  lineChart($("chart-shrink"), {
+    height: 250, margin: { left: 48 },
+    x: { domain: [-3, 3], ticks: [-3, -2, -1, 0, 1, 2, 3], label: "Coefficient without a penalty" },
+    y: { domain: [-3, 3], ticks: [-3, -2, -1, 0, 1, 2, 3], label: "With the penalty" },
+    series: [
+      { name: "none", color: COLORS.faint, dash: "4 4", width: 1.5, points: xs.map(x => [x, x]), hover: false },
+      { name: "Ridge", color: COLORS.l2, width: 2.4, points: xs.map(x => [x, ridge(x)]) },
+      { name: "Lasso", color: COLORS.l1, width: 2.4, points: xs.map(x => [x, lasso(x)]) },
+    ],
+    tip: (s, p) => `<b>${s.name}</b>: ${num(p[0], 2)} becomes ${num(p[1], 2)}`,
+    hoverRadius: 16,
+  });
+  $("shrink-live").innerHTML = `At λ = ${lam.toFixed(2)}, a coefficient of 0.5 becomes ${num(ridge(0.5), 2)} under ridge and
+    ${lasso(0.5) === 0 ? "exactly 0" : num(lasso(0.5), 2)} under lasso. A coefficient of 2 becomes ${num(ridge(2), 2)} under ridge and
+    ${num(lasso(2), 2)} under lasso. Every coefficient between −${lam.toFixed(2)} and ${lam.toFixed(2)} is switched off by lasso.`;
 }

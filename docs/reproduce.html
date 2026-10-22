@@ -3,30 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reproduce | TEP Fault Detection</title>
+<title>Reproduce | TEP fault monitor</title>
+<script>try{var t=localStorage.getItem("tep-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="assets/style.css">
 <script type="module" src="assets/pages/reproduce.js"></script>
 </head>
 <body data-page="reproduce">
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
-  <div class="kicker">Reproducibility</div>
   <h1>Run everything yourself</h1>
   <p class="lede">All code is in the <a href="https://github.com/Fang099/tep-fault-detection">GitHub repository</a>. The pipeline trains
     every model, chooses thresholds and models on validation, runs the final test, and writes the files this website reads.</p>
-  <nav class="toc">
-    <a href="#data">1 · Get the data</a>
-    <a href="#colab">2 · Run on Colab</a>
-    <a href="#local">3 · Run on any computer</a>
-    <a href="#site">4 · Update this website</a>
-  </nav>
 </div></header>
 
+<div class="layout">
+<aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <section class="card" id="data">
-    <h2><span class="num">1</span>Get the data</h2>
+  <section class="section" id="data" data-toc="Get the data">
+    <h2>Get the data</h2>
     <p>Download the four CSV files from the Kaggle dataset <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>
       into one folder, keeping their names:</p>
     <pre><code>TEP_FaultFree_Training.csv   TEP_Faulty_Training.csv
@@ -34,8 +31,8 @@ TEP_FaultFree_Testing.csv    TEP_Faulty_Testing.csv</code></pre>
     <p class="note">The first run converts each CSV to a compressed Parquet file next to it, so later runs load in seconds.</p>
   </section>
 
-  <section class="card" id="colab">
-    <h2><span class="num">2</span>Run on Google Colab</h2>
+  <section class="section" id="colab" data-toc="Run on Colab">
+    <h2>Run on Google Colab</h2>
     <ol class="tight">
       <li>Put the CSVs in a Google Drive folder, for example <code>MyDrive/TEP</code>.</li>
       <li>In Colab, open <b>File → Open notebook → GitHub</b>, enter <code>Fang099/tep-fault-detection</code> and open <code>run_colab.ipynb</code>.</li>
@@ -44,8 +41,8 @@ TEP_FaultFree_Testing.csv    TEP_Faulty_Testing.csv</code></pre>
     </ol>
   </section>
 
-  <section class="card" id="local">
-    <h2><span class="num">3</span>Run on any computer</h2>
+  <section class="section" id="local" data-toc="Run on any computer">
+    <h2>Run on any computer</h2>
     <pre><code>git clone https://github.com/Fang099/tep-fault-detection.git
 cd tep-fault-detection
 pip install -r requirements.txt
@@ -68,8 +65,8 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test</
       trained models in <code>models/</code> and the website files in <code>web_data/</code>.</p>
   </section>
 
-  <section class="card" id="site">
-    <h2><span class="num">4</span>Update this website</h2>
+  <section class="section" id="site" data-toc="Update this website">
+    <h2>Update this website</h2>
     <p>The website is plain HTML, CSS and JavaScript in the <code>docs/</code> folder, served by GitHub Pages. It reads the exported
       results from <code>docs/data/</code>; nothing is trained in the browser.</p>
     <ol class="tight">
@@ -80,6 +77,7 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test</
     <p class="note" id="current-data"></p>
   </section>
 </main>
+</div>
 <footer></footer>
 </body>
 </html>

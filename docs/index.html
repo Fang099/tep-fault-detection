@@ -3,70 +3,134 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TEP Fault Detection</title>
+<title>TEP fault monitor</title>
+<script>try{var t=localStorage.getItem("tep-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="assets/style.css">
 <script type="module" src="assets/pages/overview.js"></script>
 </head>
 <body data-page="overview">
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
-  <div class="kicker">ES 335 · Machine Learning project</div>
   <h1>Detecting and diagnosing faults in a chemical plant</h1>
-  <p class="lede">How effective are different machine learning models at detecting and diagnosing faults in the Tennessee Eastman
-    Process from instantaneous process measurements, and how quickly can a fault be detected?</p>
-  <nav class="toc">
-    <a href="#tasks">1 · Two tasks</a>
-    <a href="#process">2 · The process</a>
-    <a href="#data">3 · The data</a>
-    <a href="#labels">4 · Labels</a>
-    <a href="#protocol">5 · How models are judged</a>
-    <a href="#results">6 · Results so far</a>
-  </nav>
+  <p class="lede">How well can machine learning models spot faults in the Tennessee Eastman Process, and name which fault it is,
+    from a single snapshot of 52 sensor readings? And how quickly can a fault be caught?</p>
+
+  <div class="plant">
+    <div class="plant-svg">
+      <svg viewBox="0 0 940 380" role="group" aria-label="Simplified flow diagram of the Tennessee Eastman Process">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/>
+          </marker>
+        </defs>
+        <!-- pipes -->
+        <path class="pipe" d="M118,158 H160 M118,190 H160 M118,222 H160 M160,140 V222"/>
+        <path class="pipe" d="M160,190 H226" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M272,120 V72 H376" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M496,72 H580 V138" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M645,140 V72 H678" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M645,109 H678" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M744,109 H776" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M700,52 V30 H160 V138" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M830,120 V30 H700"/>
+        <path class="pipe" d="M595,204 V300 H798" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M930,312 H862" marker-end="url(#arrow)"/>
+        <path class="pipe" d="M830,330 V362 H928" marker-end="url(#arrow)"/>
+        <!-- stream labels -->
+        <text class="stream" x="190" y="182">6</text>
+        <text class="stream" x="280" y="100">7</text>
+        <text class="stream" x="420" y="22">8 · recycle</text>
+        <text class="stream" x="838" y="72">5</text>
+        <text class="stream" x="690" y="292">10</text>
+        <text class="stream" x="930" y="304" text-anchor="end">A, C · 4</text>
+        <text class="stream" x="930" y="354" text-anchor="end">product · 11</text>
+        <text class="stream" x="780" y="113">out</text>
+        <!-- units -->
+        <g class="unit" data-unit="feeds" tabindex="0" role="button" aria-label="Feeds">
+          <rect class="shape" x="14" y="128" width="104" height="124" rx="4"/>
+          <text x="66" y="150" text-anchor="middle">Feeds</text>
+          <text x="26" y="178" style="font-weight:400">A · 1</text>
+          <text x="26" y="206" style="font-weight:400">D · 2</text>
+          <text x="26" y="234" style="font-weight:400">E · 3</text>
+        </g>
+        <g class="unit" data-unit="reactor" tabindex="0" role="button" aria-label="Reactor">
+          <rect class="shape" x="228" y="120" width="88" height="160" rx="38"/>
+          <text x="272" y="205" text-anchor="middle">Reactor</text>
+        </g>
+        <g class="unit" data-unit="condenser" tabindex="0" role="button" aria-label="Condenser">
+          <rect class="shape" x="378" y="54" width="118" height="36" rx="18"/>
+          <text x="437" y="77" text-anchor="middle">Condenser</text>
+        </g>
+        <g class="unit" data-unit="separator" tabindex="0" role="button" aria-label="Separator">
+          <rect class="shape" x="520" y="140" width="150" height="64" rx="32"/>
+          <text x="595" y="177" text-anchor="middle">Separator</text>
+        </g>
+        <g class="unit" data-unit="compressor" tabindex="0" role="button" aria-label="Compressor">
+          <circle class="shape" cx="700" cy="72" r="20"/>
+          <path d="M688,62 L712,68 L712,76 L688,82 z" style="fill:none;stroke:var(--text);stroke-width:1.4;pointer-events:none"/>
+          <text x="726" y="66">Compressor</text>
+        </g>
+        <g class="unit" data-unit="purge" tabindex="0" role="button" aria-label="Purge">
+          <rect class="shape" x="680" y="96" width="64" height="26" rx="4"/>
+          <text x="712" y="114" text-anchor="middle">Purge</text>
+        </g>
+        <g class="unit" data-unit="stripper" tabindex="0" role="button" aria-label="Stripper">
+          <rect class="shape" x="800" y="120" width="60" height="210" rx="24"/>
+          <text x="830" y="225" text-anchor="middle" transform="rotate(-90 830 225)">Stripper</text>
+        </g>
+      </svg>
+      <p class="plant-legend">Simplified from Downs and Vogel (1993). Numbers are stream numbers.</p>
+    </div>
+    <div class="plant-info" id="plant-info" aria-live="polite"></div>
+  </div>
 </div></header>
 
+<div class="layout">
+<aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <section class="card" id="tasks">
-    <h2><span class="num">1</span>Two tasks</h2>
-    <p class="intro">Industrial process faults can reduce product quality, disrupt operations and create safety risks.
+  <section class="section" id="tasks" data-toc="Two tasks">
+    <h2>Two tasks</h2>
+    <p class="intro">Process faults can reduce product quality, disrupt operations and create safety risks.
       An operator needs to know two things, quickly and reliably.</p>
-    <div class="cards-grid">
-      <a class="linkcard" href="detection.html"><b>1 · Detection</b><span>Is a fault happening right now? A yes/no answer from a single
+    <div class="linkgrid">
+      <a href="detection.html"><b>Detection</b><span>Is a fault happening right now? A yes-or-no answer from a single
         3-minute snapshot of the plant, judged on how many faults it catches against how many false alarms it raises.</span></a>
-      <a class="linkcard" href="diagnosis.html"><b>2 · Diagnosis</b><span>Which of the 20 fault types is it? Judged on how evenly well it
-        names every fault (macro-F1), and which faults it confuses.</span></a>
+      <a href="diagnosis.html"><b>Diagnosis</b><span>Which of the 20 fault types is it? Judged on how well it names every fault,
+        hard ones included (macro-F1), and on which faults it confuses.</span></a>
     </div>
     <p class="callout"><b>Instantaneous measurements only.</b> Every model sees one row at a time: the 52 process variables at a single
       moment, with no history. That keeps the models simple and comparable, and it is also the main limitation: some faults only
       show up as slow drifts that a single snapshot can't reveal.</p>
   </section>
 
-  <section class="card" id="process">
-    <h2><span class="num">2</span>The Tennessee Eastman Process</h2>
+  <section class="section" id="process" data-toc="The process">
+    <h2>The Tennessee Eastman Process</h2>
     <p class="intro">A realistic simulation of a chemical plant published by Eastman Chemical Company (Downs and Vogel, 1993) and a
-      standard benchmark for process monitoring. Four gaseous reactants (A, C, D, E) react to form two liquid products (G and H) in a
-      plant with five main units: a reactor, a condenser, a vapour-liquid separator, a recycle compressor and a product stripper.</p>
+      standard benchmark for process monitoring. Four gaseous reactants (A, C, D, E) react to form two liquid products (G and H) in the
+      five units shown above.</p>
     <div class="split even">
       <div>
         <h3>52 variables, recorded every 3 minutes</h3>
         <ul class="tight">
-          <li><b>41 measurements</b> (<code>xmeas_1</code>–<code>xmeas_41</code>): flows, pressures, levels and temperatures (1–22),
-            plus gas compositions from analyzers (23–41).</li>
-          <li><b>11 manipulated variables</b> (<code>xmv_1</code>–<code>xmv_11</code>): the valve positions the control system sets.</li>
+          <li><b>41 measurements</b> (<code>xmeas_1</code> to <code>xmeas_41</code>): flows, pressures, levels and temperatures (1 to 22),
+            plus gas compositions from analyzers (23 to 41).</li>
+          <li><b>11 manipulated variables</b> (<code>xmv_1</code> to <code>xmv_11</code>): the valve positions the control system sets.</li>
         </ul>
-        <details><summary>All 52 variables</summary><div class="table-wrap"><table id="var-table"></table></div></details>
+        <details class="plain"><summary>All 52 variables</summary><div class="table-wrap"><table id="var-table"></table></div></details>
       </div>
       <div>
         <h3>20 programmed faults</h3>
-        <p class="note" style="margin-top:0">Steps (sudden changes), random variations, a slow drift, sticking valves, and five faults of unknown type.</p>
-        <details><summary>All 20 faults</summary><div class="table-wrap"><table id="fault-table"></table></div></details>
+        <p class="note" style="margin-top:0">Sudden steps, random variations, a slow drift, sticking valves, and five faults of unknown type.</p>
+        <details class="plain"><summary>All 20 faults</summary><div class="table-wrap"><table id="fault-table"></table></div></details>
       </div>
     </div>
   </section>
 
-  <section class="card" id="data">
-    <h2><span class="num">3</span>The data</h2>
+  <section class="section" id="data" data-toc="The data">
+    <h2>The data</h2>
     <p class="intro">From the Kaggle dataset <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>
       (Rieth et al., 2017). One row is one 3-minute time step of one simulation run.</p>
     <div class="table-wrap"><table>
@@ -80,8 +144,8 @@
     <div class="tiles" id="data-tiles" style="margin-top:14px"></div>
   </section>
 
-  <section class="card" id="labels">
-    <h2><span class="num">4</span>Labels: when is a row "faulty"?</h2>
+  <section class="section" id="labels" data-toc="Labels">
+    <h2>Labels: when is a row "faulty"?</h2>
     <p class="intro">A faulty run starts out normal; the fault is switched on partway through. Rows before that moment are labelled
       normal, rows after it faulty. Fault-free runs are normal throughout.</p>
     <div id="timelines"></div>
@@ -89,11 +153,24 @@
       already scores an F1 of about 0.96. That's why this site reports false alarms and recall on normal operation alongside the usual metrics.</p>
   </section>
 
-  <section class="card" id="protocol">
-    <h2><span class="num">5</span>How models are judged</h2>
+  <section class="section" id="models" data-toc="The models">
+    <h2>The models</h2>
+    <p class="intro">Every model is trained twice: once for detection and once for diagnosis.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Family</th><th>What it does</th><th>Settings explored</th></tr></thead>
+      <tbody>
+        <tr><td><b>Majority baseline</b></td><td>Ignores the sensors and always predicts the most common class.
+          Any useful model has to beat it.</td><td>None</td></tr>
+        <tr><td><b>Logistic regression</b></td><td>Adds up the 52 readings with one learned weight each and turns the sum into a probability.
+          A linear model: simple, fast and easy to inspect.</td><td>Class weighting (detection), penalty (none, lasso, ridge), strength C</td></tr>
+        <tr><td class="note">Coming next</td><td class="note">Decision trees and random forests, to test whether non-linear models do better.</td><td></td></tr>
+      </tbody></table></div>
+  </section>
+
+  <section class="section" id="protocol" data-toc="How models are judged">
+    <h2>How models are judged</h2>
     <ul class="tight">
-      <li><b>Split by simulation run, never by row.</b> Neighbouring rows of one run are nearly identical, so a row-level split would leak
-        answers. Within each fault type, 80% of runs train the models and 20% validate them.</li>
+      <li><b>Split by simulation run, never by row.</b> Within each fault type, 80% of runs train the models and 20% validate them.</li>
       <li><b>Choices are made on validation.</b> Decision thresholds and the best model of each kind are picked using the validation runs only.</li>
       <li><b>The test files are used once.</b> The chosen models are retrained on all training runs and evaluated a single time on the
         separate test files, keeping the thresholds chosen on validation.</li>
@@ -101,23 +178,35 @@
         normal validation rows.</li>
     </ul>
     <p class="note" id="subset-note"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Why split by run, not by row?</summary>
+      <div class="learn-body">
+        <p>Samples are only 3 minutes apart, and a chemical plant changes slowly, so neighbouring rows of the same run are nearly
+          identical. If rows were shuffled into training and validation at random, almost every validation row would have a near-copy
+          a few minutes away in the training data. The model could score well just by recognizing that particular run, not by
+          learning what a fault looks like.</p>
+        <p>Splitting by run keeps every run entirely on one side. Validation then asks the honest question: how does the model do on a
+          run it has never seen? That is the situation a real plant is in.</p>
+      </div>
+    </details>
   </section>
 
-  <section class="card" id="results">
-    <h2><span class="num">6</span>Results so far</h2>
+  <section class="section" id="results" data-toc="Results so far">
+    <h2>Results so far</h2>
     <p class="intro" id="results-intro"></p>
     <div class="tiles" id="result-tiles"></div>
     <h3>Explore</h3>
-    <div class="cards-grid">
-      <a class="linkcard" href="detection.html"><b>Detection explorer</b><span>Move the alarm threshold, see what each model catches.</span></a>
-      <a class="linkcard" href="diagnosis.html"><b>Diagnosis explorer</b><span>See which faults get confused with which.</span></a>
-      <a class="linkcard" href="regularization.html"><b>Regularization</b><span>Lasso and ridge paths: which sensors survive.</span></a>
-      <a class="linkcard" href="compare.html"><b>Compare</b><span>Any two models side by side, and every model ranked.</span></a>
-      <a class="linkcard" href="results.html"><b>Results and limitations</b><span>Test results, findings and what doesn't work.</span></a>
-      <a class="linkcard" href="reproduce.html"><b>Reproduce</b><span>Run everything yourself.</span></a>
+    <div class="linkgrid">
+      <a href="detection.html"><b>Detection</b><span>Move the alarm threshold and see what each model catches.</span></a>
+      <a href="diagnosis.html"><b>Diagnosis</b><span>See which faults get confused with which.</span></a>
+      <a href="regularization.html"><b>Regularization</b><span>Lasso and ridge: which sensors survive.</span></a>
+      <a href="compare.html"><b>Compare</b><span>Any two models side by side, and every model ranked.</span></a>
+      <a href="results.html"><b>Results</b><span>Test results, findings and limitations.</span></a>
+      <a href="reproduce.html"><b>Reproduce</b><span>Run everything yourself.</span></a>
     </div>
   </section>
 </main>
+</div>
 <footer></footer>
 </body>
 </html>

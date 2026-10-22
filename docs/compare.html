@@ -3,62 +3,71 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Compare | TEP Fault Detection</title>
+<title>Compare | TEP fault monitor</title>
+<script>try{var t=localStorage.getItem("tep-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="assets/style.css">
 <script type="module" src="assets/pages/compare.js"></script>
 </head>
 <body data-page="compare">
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
-  <div class="kicker">Model comparison</div>
   <h1>Model A against model B</h1>
   <p class="lede">Pick any two models and compare them on the same validation runs. Detection models are compared at the threshold
     that gives each one 5% false alarms, so neither gets an unfair advantage from a looser alarm setting.</p>
-  <nav class="toc">
-    <a href="#head">1 · Head to head</a>
-    <a href="#faults">2 · Fault by fault</a>
-    <a href="#speed">3 · How quickly</a>
-    <a href="#table">4 · Every model</a>
-  </nav>
 </div></header>
 
+<div class="layout">
+<aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <p class="note" id="data-note"></p>
-  <div class="modelbar" id="pickers">
+  <p class="data-note" id="data-note"></p>
+  <div class="modelbar" id="pickers" aria-label="Models to compare">
     <div class="control"><div class="control-head">Task</div>
-      <div class="seg" id="task"><button data-v="detection" class="on">Detection</button><button data-v="diagnosis">Diagnosis</button></div></div>
-    <div class="control grow"><div class="control-head"><span><span class="badge">A</span> Model A</span></div><select id="pick-a"></select></div>
-    <div class="control grow"><div class="control-head"><span><span class="badge purple">B</span> Model B</span></div><select id="pick-b"></select></div>
-    <div class="control"><button class="btn" id="swap">Swap A and B</button></div>
+      <div class="seg" id="task"><button type="button" data-v="detection" class="on">Detection</button><button type="button" data-v="diagnosis">Diagnosis</button></div></div>
+    <div class="control grow"><div class="control-head"><label for="pick-a"><span class="badge a">A</span> Model A</label></div><select id="pick-a"></select></div>
+    <div class="control grow"><div class="control-head"><label for="pick-b"><span class="badge b">B</span> Model B</label></div><select id="pick-b"></select></div>
+    <div class="control"><button class="btn" type="button" id="swap">Swap A and B</button></div>
   </div>
 
-  <section class="card" id="head">
-    <h2><span class="num">1</span>Head to head</h2>
+  <section class="section" id="head" data-toc="Head to head">
+    <h2>Head to head</h2>
     <p class="intro" id="head-intro"></p>
     <div class="table-wrap"><table id="head-table"></table></div>
     <p class="callout" id="head-callout"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Why each model gets its own threshold</summary>
+      <div class="learn-body">
+        <p>Two models' scores live on different scales. A balanced model's scores are pushed toward the middle, an unweighted
+          model's toward 1, so the same threshold of, say, 0.5 means something completely different for each. Comparing them at 0.5
+          would mostly compare how their scores happen to be scaled.</p>
+        <p>Fixing the false alarm rate instead asks the question an operator cares about: if I can tolerate this many false alarms,
+          how many real faults does each model catch? Each model's threshold is chosen on the validation runs to give exactly
+          that rate, and then recall is compared. The <a href="detection.html#roc">ROC curve</a> shows the same comparison at every false alarm rate at once.</p>
+      </div>
+    </details>
   </section>
 
-  <section class="card" id="faults">
-    <h2><span class="num">2</span>Fault by fault</h2>
+  <section class="section" id="faults" data-toc="Fault by fault">
+    <h2>Fault by fault</h2>
     <p class="intro" id="faults-intro"></p>
     <div class="plot"><div id="legend-faults"></div><div id="chart-faults"></div></div>
   </section>
 
-  <section class="card" id="speed">
-    <h2><span class="num">3</span>How quickly</h2>
+  <section class="section" id="speed" data-toc="How quickly">
+    <h2>How quickly</h2>
     <p class="intro" id="speed-intro"></p>
     <div class="plot"><div id="legend-speed"></div><div id="chart-speed"></div></div>
   </section>
 
-  <section class="card" id="table">
-    <h2><span class="num">4</span>Every model</h2>
+  <section class="section" id="table" data-toc="Every model">
+    <h2>Every model</h2>
     <p class="intro">All trained models for this task, ranked on validation. Click a column to sort, or use the buttons to load a model as A or B.</p>
     <div class="table-wrap"><table id="all-table"></table></div>
   </section>
 </main>
+</div>
 <footer></footer>
 </body>
 </html>

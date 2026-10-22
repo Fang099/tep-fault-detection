@@ -10,10 +10,13 @@ export const PAGES = [
   { key: "reproduce", href: "reproduce.html", label: "Reproduce" },
 ];
 
+// Colours are CSS variables defined in style.css, so they follow the light/dark theme.
 export const COLORS = {
-  normal: "#1d6fa3", fault: "#c2410c", teal: "#0f6b6b", purple: "#6d1660",
-  l1: "#7c3aed", l2: "#0f766e", none: "#475569", baseline: "#94a3b8", amber: "#d97706",
+  normal: "var(--c-normal)", fault: "var(--c-fault)", data: "var(--c-data)", amber: "var(--c-amber)",
+  a: "var(--c-a)", b: "var(--c-b)", l1: "var(--c-l1)", l2: "var(--c-l2)", none: "var(--c-none)",
+  muted: "var(--muted)", faint: "var(--faint)", text: "var(--text)",
 };
+export const PALETTE = ["var(--p1)", "var(--p2)", "var(--p3)", "var(--p4)", "var(--p5)", "var(--p6)", "var(--p7)", "var(--p8)"];
 
 // ---------- TEP metadata (Downs & Vogel, 1993) ----------
 export const VARIABLES = {
@@ -94,25 +97,79 @@ export const loadModel = (task, id) => getJSON(`data/${task}/${id}.json`);
 export const loadTestModel = (task, id) => getJSON(`data/${task}/test_${id}.json`);
 
 // ---------- Page chrome ----------
+const MARK = `<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+  <rect x="6" y="2.5" width="10" height="17" rx="5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M1 11h5M16 7h5M16 15h5" stroke="currentColor" stroke-width="1.6"/>
+  <circle cx="11" cy="13.5" r="2.2" fill="var(--c-fault)"/></svg>`;
+
+function effectiveTheme() {
+  const set = document.documentElement.getAttribute("data-theme");
+  if (set) return set;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function themeButton(btn) {
+  const dark = effectiveTheme() === "dark";
+  btn.innerHTML = dark
+    ? `<svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g></svg><span class="tt-label">Light</span>`
+    : `<svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="currentColor"/></svg><span class="tt-label">Dark</span>`;
+  btn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+}
+
 export function renderChrome() {
   const page = document.body.dataset.page;
   const nav = document.getElementById("topnav");
   if (nav) {
     nav.className = "topnav";
-    nav.innerHTML = `<div class="inner"><span class="brand">TEP Fault Detection</span>${
-      PAGES.map(p => `<a href="${p.href}" class="${p.key === page ? "active" : ""}">${p.label}</a>`).join("")}</div>`;
+    nav.innerHTML = `<div class="inner">
+      <a class="brand" href="index.html">${MARK}<span>TEP fault monitor</span></a>
+      <div class="navlinks">${PAGES.map(p => `<a href="${p.href}"${p.key === page ? ' class="active" aria-current="page"' : ""}>${p.label}</a>`).join("")}</div>
+      <button class="theme-toggle" type="button"></button></div>`;
+    const btn = nav.querySelector(".theme-toggle");
+    themeButton(btn);
+    btn.addEventListener("click", () => {
+      const next = effectiveTheme() === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("tep-theme", next); } catch (e) { /* storage unavailable: theme lasts for this page only */ }
+      themeButton(btn);
+    });
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => themeButton(btn));
   }
+  buildSideToc();
   const foot = document.querySelector("footer");
-  if (foot) foot.innerHTML = `ES 335 Machine Learning project · Tennessee Eastman Process data from Kaggle
-    (<a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>) ·
-    <a href="https://github.com/Fang099/tep-fault-detection">source on GitHub</a>`;
+  if (foot) foot.innerHTML = `ES 335 machine learning project. Tennessee Eastman Process data from Kaggle
+    (<a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>).
+    <a href="https://github.com/Fang099/tep-fault-detection">Source code on GitHub</a>.`;
+}
+
+// "On this page" list built from the page's sections, with the current section highlighted while scrolling.
+function buildSideToc() {
+  const toc = document.getElementById("sidetoc");
+  if (!toc) return;
+  const sections = [...document.querySelectorAll("main section.section[id]")];
+  toc.innerHTML = `<p class="toc-title">On this page</p><ol>${
+    sections.map(s => `<li><a href="#${s.id}">${esc(s.dataset.toc || s.querySelector("h2")?.textContent || s.id)}</a></li>`).join("")}</ol>`;
+  const links = new Map(sections.map(s => [s.id, toc.querySelector(`a[href="#${s.id}"]`)]));
+  const visible = new Set();
+  let current = sections[0]?.id;
+  const update = () => {
+    const first = sections.find(s => visible.has(s.id));
+    if (first) current = first.id;
+    links.forEach((a, id) => a.classList.toggle("current", current === id));
+  };
+  update();
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) e.isIntersecting ? visible.add(e.target.id) : visible.delete(e.target.id);
+    update();
+  }, { rootMargin: "-90px 0px -55% 0px" });
+  sections.forEach(s => io.observe(s));
 }
 
 export function showError(err) {
   console.error(err);
   const main = document.querySelector("main");
   const box = document.createElement("div");
-  box.className = "card";
+  box.className = "panel";
+  box.style.marginBottom = "20px";
   box.innerHTML = `<b>Something went wrong loading the results.</b><p class="note">${esc(err.message || err)}.
     If you opened this file directly from disk, serve the folder instead (for example <code>python -m http.server</code> inside <code>docs/</code>).</p>`;
   main.prepend(box);
@@ -127,90 +184,105 @@ export function dataNote(manifest) {
 }
 
 // ---------- Models ----------
+// A selection is { family: "baseline" | "logreg", penalty: "none" | "l1" | "l2", weighting: "none" | "balanced", C }.
+// In the exported data the majority baseline is stored with penalty "baseline".
+export const FAMILIES = [
+  { key: "baseline", label: "Majority baseline" },
+  { key: "logreg", label: "Logistic regression" },
+];
 const sameC = (a, b) => (a == null && b == null) || (a != null && b != null && Math.abs(Math.log10(a) - Math.log10(b)) < 1e-6);
+export const familyOf = m => (m.penalty === "baseline" ? "baseline" : "logreg");
 
 export function findModel(manifest, task, sel) {
   return manifest[task].models.find(m => {
+    if (sel.family === "baseline") return m.penalty === "baseline";
     if (m.penalty !== sel.penalty) return false;
-    if (sel.penalty === "baseline") return true;
     if (task === "detection" && m.class_weight !== sel.weighting) return false;
     return sel.penalty === "none" ? true : sameC(m.C, sel.C);
   });
 }
 export function selectionOf(model) {
-  return { penalty: model.penalty, weighting: model.class_weight || "none", C: model.C };
+  if (familyOf(model) === "baseline") return { family: "baseline", penalty: "none", weighting: "none", C: null };
+  return { family: "logreg", penalty: model.penalty, weighting: model.class_weight || "none", C: model.C };
 }
 export function bestModel(manifest, task) {
   return manifest[task].models.find(m => m.id === manifest[task].best);
 }
-export function shortLabel(m) {
-  return m.label;
-}
 
 // Read / write the selected model in the page URL so links and reloads keep it.
-export function readSelection(manifest, task, prefix = "") {
+export function readSelection(manifest, task) {
   const q = new URLSearchParams(location.search);
-  const penalty = q.get(prefix + "penalty");
+  if (q.get("family") === "baseline" || q.get("penalty") === "baseline") return selectionOf(manifest[task].models.find(m => m.penalty === "baseline"));
+  const penalty = q.get("penalty");
   if (!penalty) return selectionOf(bestModel(manifest, task));
-  const sel = { penalty, weighting: q.get(prefix + "w") || "none", C: q.get(prefix + "C") ? +q.get(prefix + "C") : null };
-  if (sel.penalty !== "none" && sel.penalty !== "baseline" && sel.C == null) sel.C = 1;
+  const sel = { family: "logreg", penalty, weighting: q.get("w") || "none", C: q.get("C") ? +q.get("C") : null };
+  if (sel.penalty !== "none" && sel.C == null) sel.C = 1;
   return findModel(manifest, task, sel) ? sel : selectionOf(bestModel(manifest, task));
 }
-export function writeSelection(sel, prefix = "", extra = {}) {
-  const q = new URLSearchParams(location.search);
-  q.set(prefix + "penalty", sel.penalty);
-  sel.weighting && sel.weighting !== "none" ? q.set(prefix + "w", sel.weighting) : q.delete(prefix + "w");
-  sel.C != null && sel.penalty !== "none" && sel.penalty !== "baseline" ? q.set(prefix + "C", sel.C) : q.delete(prefix + "C");
-  for (const [k, v] of Object.entries(extra)) v == null ? q.delete(k) : q.set(k, v);
+function selectionParams(sel) {
+  const q = new URLSearchParams();
+  if (sel.family === "baseline") { q.set("family", "baseline"); return q; }
+  q.set("penalty", sel.penalty);
+  if (sel.weighting && sel.weighting !== "none") q.set("w", sel.weighting);
+  if (sel.C != null && sel.penalty !== "none") q.set("C", sel.C);
+  return q;
+}
+export function writeSelection(sel, extra = {}) {
+  const q = selectionParams(sel);
+  const old = new URLSearchParams(location.search);
+  for (const [k, v] of Object.entries(extra)) v == null ? old.delete(k) : q.set(k, v);
   history.replaceState(null, "", "?" + q.toString() + location.hash);
 }
 export function modelLink(page, model) {
-  const s = selectionOf(model);
-  const q = new URLSearchParams({ penalty: s.penalty });
-  if (s.weighting && s.weighting !== "none") q.set("w", s.weighting);
-  if (s.C != null) q.set("C", s.C);
-  return `${page}?${q}`;
+  return `${page}?${selectionParams(selectionOf(model))}`;
 }
 
 // ---------- Model selector (sticky bar) ----------
-// opts: { task, manifest, selection, onChange(selection, model), purple }
+// opts: { task, manifest, selection, onChange(selection, model) }
 export function modelBar(container, opts) {
   const { task, manifest } = opts;
   const grid = manifest.settings.C_grid;
   let sel = { ...opts.selection };
+  // Logistic-regression settings to return to after looking at the baseline.
+  let lastLR = sel.family === "logreg" ? { ...sel } : selectionOf(bestModel(manifest, task));
 
   container.classList.add("modelbar");
+  container.setAttribute("aria-label", "Model selection");
   container.innerHTML = `
     <div class="control"><div class="control-head">Model family</div>
-      <div class="seg" data-k="family"><button class="on">Logistic regression</button></div></div>
-    ${task === "detection" ? `<div class="control"><div class="control-head">Class weighting</div>
-      <div class="seg" data-k="weighting"><button data-v="none">Unweighted</button><button data-v="balanced">Balanced</button></div></div>` : ""}
-    <div class="control"><div class="control-head">Penalty</div>
-      <div class="seg" data-k="penalty"><button data-v="baseline">Majority baseline</button><button data-v="none">None</button>
-      <button data-v="l1">Lasso (L1)</button><button data-v="l2">Ridge (L2)</button></div></div>
-    <div class="control grow"><div class="control-head"><span>Strength C <span class="note">(smaller = stronger)</span></span><span class="val" data-k="cval"></span></div>
-      <input type="range" min="0" max="${grid.length - 1}" step="1" data-k="C">
-      <div class="ticks">${grid.map(c => `<span>${fmtC(c)}</span>`).join("")}</div></div>
-    <div class="current"><span class="note">Selected:</span> <b data-k="label"></b> <span data-k="badges"></span>
-      <button class="btn" data-k="best" style="margin-left:auto">Use best model</button></div>`;
+      <div class="seg" data-k="family">${FAMILIES.map(f => `<button type="button" data-v="${f.key}">${f.label}</button>`).join("")}</div></div>
+    <p class="baseline-note" data-k="bnote">Predicts the most common class for every row. It has no settings and ignores the sensors entirely.</p>
+    <div class="lr-settings" data-k="lr">
+      ${task === "detection" ? `<div class="control"><div class="control-head">Class weighting</div>
+        <div class="seg" data-k="weighting"><button type="button" data-v="none">Unweighted</button><button type="button" data-v="balanced">Balanced</button></div></div>` : ""}
+      <div class="control"><div class="control-head">Penalty</div>
+        <div class="seg" data-k="penalty"><button type="button" data-v="none">None</button><button type="button" data-v="l1">Lasso (L1)</button><button type="button" data-v="l2">Ridge (L2)</button></div></div>
+      <div class="control grow"><div class="control-head"><span>Strength C <span class="note">(smaller is stronger)</span></span><span class="val" data-k="cval"></span></div>
+        <input type="range" min="0" max="${grid.length - 1}" step="1" data-k="C" aria-label="Regularization strength C">
+        <div class="ticks">${grid.map(c => `<span>${fmtC(c)}</span>`).join("")}</div></div>
+    </div>
+    <div class="current"><span class="note">Showing</span> <b data-k="label"></b> <span data-k="badges"></span>
+      <button class="btn" type="button" data-k="best" style="margin-left:auto">Use best model</button></div>`;
 
   const q = k => container.querySelector(`[data-k="${k}"]`);
   const slider = q("C");
 
   function sync() {
     const model = findModel(manifest, task, sel);
-    for (const k of ["weighting", "penalty"]) {
-      const seg = q(k);
-      if (!seg) continue;
-      seg.querySelectorAll("button").forEach(b => {
+    const isBase = sel.family === "baseline";
+    q("lr").hidden = isBase;
+    q("lr").style.display = isBase ? "none" : "";
+    q("bnote").hidden = !isBase;
+    for (const k of ["family", "weighting", "penalty"]) {
+      q(k)?.querySelectorAll("button").forEach(b => {
         b.classList.toggle("on", b.dataset.v === sel[k]);
-        b.disabled = k === "weighting" && sel.penalty === "baseline";
+        b.setAttribute("aria-pressed", b.dataset.v === sel[k]);
       });
     }
     const usesC = sel.penalty === "l1" || sel.penalty === "l2";
     slider.disabled = !usesC;
     slider.value = usesC ? Math.max(0, grid.findIndex(c => sameC(c, sel.C))) : grid.length - 1;
-    q("cval").textContent = usesC ? `C = ${fmtC(sel.C)}` : sel.penalty === "none" ? "no penalty (C = ∞)" : "–";
+    q("cval").textContent = usesC ? `C = ${fmtC(sel.C)}` : "no penalty";
     q("label").textContent = model ? model.label : "not trained";
     const badges = [];
     if (model && model.id === manifest[task].best) badges.push(`<span class="badge best">best on validation</span>`);
@@ -219,19 +291,25 @@ export function modelBar(container, opts) {
     return model;
   }
   function changed() {
+    if (sel.family === "logreg") lastLR = { ...sel };
     const model = sync();
     if (model) opts.onChange(sel, model);
   }
   container.addEventListener("click", e => {
     const b = e.target.closest("button");
     if (!b) return;
-    const seg = b.closest(".seg");
     if (b.dataset.k === "best") { sel = selectionOf(bestModel(manifest, task)); changed(); return; }
+    const seg = b.closest(".seg");
     if (!seg || !b.dataset.v) return;
     const k = seg.dataset.k;
-    sel[k] = b.dataset.v;
-    if ((sel.penalty === "l1" || sel.penalty === "l2") && sel.C == null) sel.C = grid[grid.length - 1];
-    if (sel.penalty === "baseline") sel.weighting = "none";
+    if (k === "family") {
+      if (b.dataset.v === sel.family) return;
+      sel = b.dataset.v === "baseline" ? { family: "baseline", penalty: "none", weighting: "none", C: null } : { ...lastLR };
+    } else {
+      sel[k] = b.dataset.v;
+      if ((sel.penalty === "l1" || sel.penalty === "l2") && sel.C == null) sel.C = grid[grid.length - 1];
+      if (sel.penalty === "none") sel.C = null;
+    }
     changed();
   });
   slider.addEventListener("input", () => { sel.C = grid[+slider.value]; changed(); });
@@ -281,7 +359,6 @@ export function auc(points) {
 // Logit transform used to spread probability scores for plotting.
 export const logit = p => { const e = 1e-7, q = Math.min(1 - e, Math.max(e, p)); return Math.log(q / (1 - q)); };
 export const PROB_TICKS = [0.0001, 0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999, 0.9999];
-export const probFmt = p => (p >= 0.5 ? String(p) : String(p));
 
 // Tile HTML helper.
 export function tile(label, value, sub = "", cls = "") {

@@ -3,40 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Results | TEP Fault Detection</title>
+<title>Results | TEP fault monitor</title>
+<script>try{var t=localStorage.getItem("tep-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="assets/style.css">
 <script type="module" src="assets/pages/results.js"></script>
 </head>
 <body data-page="results">
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
-  <div class="kicker">Results and limitations</div>
   <h1>What worked, what didn't, and why</h1>
   <p class="lede">The final test on unseen simulation runs, the main findings from validation, and the limits of what these results can claim.</p>
-  <nav class="toc">
-    <a href="#test">1 · Final test</a>
-    <a href="#findings">2 · Findings</a>
-    <a href="#limits">3 · Limitations</a>
-    <a href="#refs">4 · References</a>
-  </nav>
 </div></header>
 
+<div class="layout">
+<aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <section class="card" id="test">
-    <h2><span class="num">1</span>Final test</h2>
+  <section class="section" id="test" data-toc="Final test">
+    <h2>Final test</h2>
     <div id="test-body"></div>
   </section>
 
-  <section class="card" id="findings">
-    <h2><span class="num">2</span>Findings from validation</h2>
-    <p class="note" id="data-note"></p>
+  <section class="section" id="findings" data-toc="Findings">
+    <h2>Findings from validation</h2>
+    <p class="data-note" id="data-note"></p>
     <ul class="tight" id="findings-list"></ul>
   </section>
 
-  <section class="card" id="limits">
-    <h2><span class="num">3</span>Limitations</h2>
+  <section class="section" id="limits" data-toc="Limitations">
+    <h2>Limitations</h2>
     <ul class="tight">
       <li><b>One snapshot at a time.</b> Models see the 52 variables at a single moment. Faults that show up as slow drifts or changes in
         variability are hard or impossible to see this way.</li>
@@ -51,8 +48,8 @@
     </ul>
   </section>
 
-  <section class="card" id="refs">
-    <h2><span class="num">4</span>References</h2>
+  <section class="section" id="refs" data-toc="References">
+    <h2>References</h2>
     <ul class="tight">
       <li>Downs, J. J. and Vogel, E. F. (1993). A plant-wide industrial process control problem. <i>Computers &amp; Chemical Engineering</i>, 17(3), 245–255.</li>
       <li>Rieth, C. A., Amsel, B. D., Tran, R. and Cook, M. B. (2017). Additional Tennessee Eastman Process simulation data for anomaly
@@ -61,6 +58,7 @@
     </ul>
   </section>
 </main>
+</div>
 <footer></footer>
 </body>
 </html>

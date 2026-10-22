@@ -1,6 +1,6 @@
 import {
   renderChrome, showError, loadManifest, loadModel, dataNote, detectionView, modelLink,
-  COLORS, faultDesc, pct, num, fmtC, fmtMinutes, esc,
+  COLORS, FAMILIES, familyOf, faultDesc, pct, num, fmtC, fmtMinutes, esc,
 } from "../site.js";
 import { barChart, legend } from "../charts.js";
 
@@ -8,7 +8,7 @@ renderChrome();
 
 const state = { manifest: null, task: "detection", a: null, b: null, sort: null, token: 0 };
 const $ = id => document.getElementById(id);
-const A = COLORS.teal, B = COLORS.purple;
+const A = COLORS.a, B = COLORS.b;
 
 main().catch(showError);
 
@@ -46,7 +46,12 @@ function setTask(task, a, b) {
   const [da, db] = defaults(task);
   state.a = ids.has(a) ? a : da;
   state.b = ids.has(b) ? b : db;
-  const opts = models.map(m => `<option value="${m.id}">${esc(m.label)}${m.id === state.manifest[task].best ? " ★ best" : ""}</option>`).join("");
+  // Group the menu by model family.
+  const opts = FAMILIES.map(f => {
+    const items = models.filter(m => familyOf(m) === f.key);
+    return items.length ? `<optgroup label="${f.label}">${items.map(m =>
+      `<option value="${m.id}">${esc(m.label)}${m.id === state.manifest[task].best ? " (best)" : ""}</option>`).join("")}</optgroup>` : "";
+  }).join("");
   $("pick-a").innerHTML = opts;
   $("pick-b").innerHTML = opts;
   update();
@@ -68,14 +73,21 @@ async function update() {
   renderTable();
 }
 
+// Detection metrics at 5% false alarms. The baseline gives every row the same score, so to stay within 5% false alarms
+// it has to raise no alarm at all: it catches nothing and has no precision.
+function at5(m) {
+  if (m.penalty !== "baseline") return m.val;
+  return { ...m.val, recall: 0, normal_recall: 1, precision: null, F1: 0 };
+}
+
 // ---------- 1. Head to head ----------
 function renderHead(ma, mb) {
   const det = state.task === "detection";
   const rows = det ? [
-    ["Faults caught (recall)", m => m.val.recall, pct, true],
-    ["False alarm rate", m => 1 - m.val.normal_recall, pct, false],
-    ["Precision", m => m.val.precision, pct, true],
-    ["F1 (fault class)", m => m.val.F1, v => num(v, 3), true],
+    ["Faults caught (recall)", m => at5(m).recall, pct, true],
+    ["False alarm rate", m => 1 - at5(m).normal_recall, pct, false],
+    ["Precision", m => at5(m).precision, pct, true],
+    ["F1 (fault class)", m => at5(m).F1, v => num(v, 3), true],
     ["ROC-AUC", m => m.val.ROC_AUC, v => num(v, 3), true],
     ["PR-AUC", m => m.val.PR_AUC, v => num(v, 3), true],
     ["Sensors used", m => m.coef_nonzero, v => (v == null ? "–" : `${v} / 52`), null],
@@ -89,8 +101,8 @@ function renderHead(ma, mb) {
   $("head-intro").textContent = det
     ? "Validation metrics at each model's own 5% false-alarm threshold. The last column shows A minus B; green means A is better."
     : "Validation metrics on rows where a fault is active. The last column shows A minus B; green means A is better.";
-  $("head-table").innerHTML = `<thead><tr><th></th><th class="n"><span class="badge">A</span> ${esc(ma.label)}</th>
-      <th class="n"><span class="badge purple">B</span> ${esc(mb.label)}</th><th class="n">A − B</th></tr></thead><tbody>${
+  $("head-table").innerHTML = `<thead><tr><th></th><th class="n"><span class="badge a">A</span> ${esc(ma.label)}</th>
+      <th class="n"><span class="badge b">B</span> ${esc(mb.label)}</th><th class="n">A − B</th></tr></thead><tbody>${
     rows.map(([name, get, fmt, higherBetter]) => {
       const va = get(ma), vb = get(mb);
       let delta = "";
@@ -102,7 +114,7 @@ function renderHead(ma, mb) {
       }
       return `<tr><td>${name}</td><td class="n">${fmt(va)}</td><td class="n">${fmt(vb)}</td><td class="n">${delta}</td></tr>`;
     }).join("")}</tbody>`;
-  const main = det ? ["faults caught at 5% false alarms", ma.val.recall - mb.val.recall, pct]
+  const main = det ? ["faults caught at 5% false alarms", at5(ma).recall - at5(mb).recall, v => `${(100 * v).toFixed(1)} percentage points`]
                    : ["macro-F1", ma.val.macro_F1 - mb.val.macro_F1, v => num(v, 3)];
   $("head-callout").innerHTML = Math.abs(main[1]) < 0.005
     ? `<b>Practically a tie</b> on ${main[0]}: the difference is ${main[2](Math.abs(main[1]))}.`
@@ -113,7 +125,7 @@ function renderHead(ma, mb) {
 function perFault(model, file) {
   if (state.task === "detection") {
     const v = detectionView(file.val);
-    const t = model.penalty === "baseline" ? 0 : v.indexForFar(0.05);
+    const t = model.penalty === "baseline" ? v.B : v.indexForFar(0.05);
     return { faults: v.faults, values: v.perFault(t) };
   }
   return { faults: file.val.labels, values: file.val.recall };
@@ -163,21 +175,22 @@ function renderTable() {
   const det = state.task === "detection";
   const cols = [
     ["Model", m => m.label, "s"],
+    ["Family", m => (familyOf(m) === "baseline" ? "Baseline" : "Logistic regression"), "s"],
     ...(det ? [["Weighting", m => (m.penalty === "baseline" ? "–" : m.class_weight), "s"]] : []),
-    ["Penalty", m => ({ baseline: "baseline", none: "none", l1: "lasso", l2: "ridge" }[m.penalty]), "s"],
+    ["Penalty", m => ({ baseline: "–", none: "none", l1: "lasso", l2: "ridge" }[m.penalty]), "s"],
     ["C", m => m.C, "n", v => (v == null ? "–" : fmtC(v))],
     ["Sensors", m => m.coef_nonzero, "n", v => (v == null ? "–" : v)],
     ...(det ? [
       // At 5% false alarms the baseline (one score for every row) cannot raise any alarm, so it catches 0%.
-      ["Caught @5% FA", m => (m.penalty === "baseline" ? 0 : m.val.recall), "n", pct],
-      ["Precision", m => (m.penalty === "baseline" ? null : m.val.precision), "n", pct],
+      ["Caught @5% FA", m => at5(m).recall, "n", pct],
+      ["Precision", m => at5(m).precision, "n", pct],
       ["ROC-AUC", m => m.val.ROC_AUC, "n", v => num(v, 3)],
     ] : [
       ["Macro-F1", m => m.val.macro_F1, "n", v => num(v, 3)],
       ["Accuracy", m => m.val.accuracy, "n", pct],
     ]),
   ];
-  const key = det ? 5 : 4;
+  const key = det ? 6 : 5;
   if (!state.sort) state.sort = { col: key, desc: true };
   const { col, desc } = state.sort;
   const models = [...state.manifest[state.task].models].sort((x, y) => {
@@ -193,8 +206,8 @@ function renderTable() {
     <tbody>${models.map(m => `<tr class="${m.id === best ? "highlight" : ""}">${cols.map(([, get, type, fmt]) => {
       const v = get(m);
       return `<td class="${type === "n" ? "n" : ""}">${fmt ? fmt(v) : esc(v)}${type === "s" && get === cols[0][1] && m.id === best ? ' <span class="badge best">best</span>' : ""}</td>`;
-    }).join("")}<td style="white-space:nowrap"><button class="btn" data-a="${m.id}" style="padding:2px 8px">A</button>
-      <button class="btn" data-b="${m.id}" style="padding:2px 8px">B</button>
+    }).join("")}<td style="white-space:nowrap"><button class="btn small" type="button" data-a="${m.id}" aria-label="Set as model A">A</button>
+      <button class="btn small" type="button" data-b="${m.id}" aria-label="Set as model B">B</button>
       <a href="${modelLink(page, m)}" style="font-size:13px;margin-left:4px">open</a></td></tr>`).join("")}</tbody>`;
   $("all-table").onclick = e => {
     const th = e.target.closest("th[data-col]");
