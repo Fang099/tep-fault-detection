@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results | TEP Fault Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/pages/results.js"></script>
+</head>
+<body data-page="results">
+<nav id="topnav"></nav>
+<header class="page-head"><div class="inner">
+  <div class="kicker">Results and limitations</div>
+  <h1>What worked, what didn't, and why</h1>
+  <p class="lede">The final test on unseen simulation runs, the main findings from validation, and the limits of what these results can claim.</p>
+  <nav class="toc">
+    <a href="#test">1 · Final test</a>
+    <a href="#findings">2 · Findings</a>
+    <a href="#limits">3 · Limitations</a>
+    <a href="#refs">4 · References</a>
+  </nav>
+</div></header>
+
+<main>
+  <section class="card" id="test">
+    <h2><span class="num">1</span>Final test</h2>
+    <div id="test-body"></div>
+  </section>
+
+  <section class="card" id="findings">
+    <h2><span class="num">2</span>Findings from validation</h2>
+    <p class="note" id="data-note"></p>
+    <ul class="tight" id="findings-list"></ul>
+  </section>
+
+  <section class="card" id="limits">
+    <h2><span class="num">3</span>Limitations</h2>
+    <ul class="tight">
+      <li><b>One snapshot at a time.</b> Models see the 52 variables at a single moment. Faults that show up as slow drifts or changes in
+        variability are hard or impossible to see this way.</li>
+      <li><b>Some faults are invisible to these variables.</b> Faults 3, 9 and 15 are widely reported as nearly undetectable in the TEP
+        literature, because they barely change the statistics of the measured data. Low scores on them are expected.</li>
+      <li><b>Detection delays can include chance alarms.</b> At a 5% false-alarm rate, three alarms in a row eventually happen on normal
+        operation too, so long delays for weakly detected faults overstate what the model can do.</li>
+      <li><b>Thresholds are chosen on validation.</b> On new data the actual false-alarm rate can drift from the 5% target.</li>
+      <li><b>Training subsamples time steps.</b> To keep training time practical, models train on every few time steps of each run;
+        validation and test use every row.</li>
+      <li><b>Simulation only.</b> Conclusions are limited to the TEP benchmark and may not carry over to a real plant.</li>
+    </ul>
+  </section>
+
+  <section class="card" id="refs">
+    <h2><span class="num">4</span>References</h2>
+    <ul class="tight">
+      <li>Downs, J. J. and Vogel, E. F. (1993). A plant-wide industrial process control problem. <i>Computers &amp; Chemical Engineering</i>, 17(3), 245–255.</li>
+      <li>Rieth, C. A., Amsel, B. D., Tran, R. and Cook, M. B. (2017). Additional Tennessee Eastman Process simulation data for anomaly
+        detection evaluation. Harvard Dataverse. Distributed as CSV on Kaggle: <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>.</li>
+      <li>Chiang, L. H., Russell, E. L. and Braatz, R. D. (2001). <i>Fault Detection and Diagnosis in Industrial Systems</i>. Springer.</li>
+    </ul>
+  </section>
+</main>
+<footer></footer>
+</body>
+</html>

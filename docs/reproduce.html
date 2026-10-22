@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reproduce | TEP Fault Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/pages/reproduce.js"></script>
+</head>
+<body data-page="reproduce">
+<nav id="topnav"></nav>
+<header class="page-head"><div class="inner">
+  <div class="kicker">Reproducibility</div>
+  <h1>Run everything yourself</h1>
+  <p class="lede">All code is in the <a href="https://github.com/Fang099/tep-fault-detection">GitHub repository</a>. The pipeline trains
+    every model, chooses thresholds and models on validation, runs the final test, and writes the files this website reads.</p>
+  <nav class="toc">
+    <a href="#data">1 · Get the data</a>
+    <a href="#colab">2 · Run on Colab</a>
+    <a href="#local">3 · Run on any computer</a>
+    <a href="#site">4 · Update this website</a>
+  </nav>
+</div></header>
+
+<main>
+  <section class="card" id="data">
+    <h2><span class="num">1</span>Get the data</h2>
+    <p>Download the four CSV files from the Kaggle dataset <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>
+      into one folder, keeping their names:</p>
+    <pre><code>TEP_FaultFree_Training.csv   TEP_Faulty_Training.csv
+TEP_FaultFree_Testing.csv    TEP_Faulty_Testing.csv</code></pre>
+    <p class="note">The first run converts each CSV to a compressed Parquet file next to it, so later runs load in seconds.</p>
+  </section>
+
+  <section class="card" id="colab">
+    <h2><span class="num">2</span>Run on Google Colab</h2>
+    <ol class="tight">
+      <li>Put the CSVs in a Google Drive folder, for example <code>MyDrive/TEP</code>.</li>
+      <li>In Colab, open <b>File → Open notebook → GitHub</b>, enter <code>Fang099/tep-fault-detection</code> and open <code>run_colab.ipynb</code>.</li>
+      <li>Set <code>DATA_DIR</code> to your folder and run the cells in order. Finished models are saved to Drive, so an interrupted run
+        continues where it stopped.</li>
+    </ol>
+  </section>
+
+  <section class="card" id="local">
+    <h2><span class="num">3</span>Run on any computer</h2>
+    <pre><code>git clone https://github.com/Fang099/tep-fault-detection.git
+cd tep-fault-detection
+pip install -r requirements.txt
+
+python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100   # subset: faster
+python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0     # all 500 runs per fault
+python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test</code></pre>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>--runs-per-fault</code></td><td class="n">100</td><td>Use the first N runs of each fault type; 0 means all 500.</td></tr>
+        <tr><td><code>--det-stride</code></td><td class="n">2</td><td>Detection trains on every k-th time step of each run.</td></tr>
+        <tr><td><code>--diag-stride</code></td><td class="n">5</td><td>Diagnosis trains on every k-th time step.</td></tr>
+        <tr><td><code>--selection-far</code></td><td class="n">0.05</td><td>False-alarm rate used to set thresholds and pick the best detection model.</td></tr>
+        <tr><td><code>--test-runs-per-fault</code></td><td class="n">100</td><td>Faulty test runs used per fault type in the final test.</td></tr>
+        <tr><td><code>--final-test</code></td><td class="n">off</td><td>Retrain the chosen models on all training runs and evaluate once on test.</td></tr>
+        <tr><td><code>--force-retrain</code></td><td class="n">off</td><td>Retrain models even if their results already exist.</td></tr>
+      </tbody></table></div>
+    <p class="note">Results go to <code>outputs_&lt;N&gt;runs/</code> (or <code>outputs_full/</code>) inside the data folder:
+      trained models in <code>models/</code> and the website files in <code>web_data/</code>.</p>
+  </section>
+
+  <section class="card" id="site">
+    <h2><span class="num">4</span>Update this website</h2>
+    <p>The website is plain HTML, CSS and JavaScript in the <code>docs/</code> folder, served by GitHub Pages. It reads the exported
+      results from <code>docs/data/</code>; nothing is trained in the browser.</p>
+    <ol class="tight">
+      <li>Copy the contents of <code>web_data/</code> into <code>docs/data/</code> (the Colab notebook's last cell downloads them as a zip).</li>
+      <li>Commit and push. GitHub Pages updates within a minute or two.</li>
+      <li>To preview locally: <code>cd docs</code>, then <code>python -m http.server</code>, and open <code>http://localhost:8000</code>.</li>
+    </ol>
+    <p class="note" id="current-data"></p>
+  </section>
+</main>
+<footer></footer>
+</body>
+</html>

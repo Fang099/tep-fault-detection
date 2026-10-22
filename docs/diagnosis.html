@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnosis | TEP Fault Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/pages/diagnosis.js"></script>
+</head>
+<body data-page="diagnosis">
+<nav id="topnav"></nav>
+<header class="page-head"><div class="inner">
+  <div class="kicker">Task 2 · Fault diagnosis</div>
+  <h1>Which fault is it?</h1>
+  <p class="lede">Once a fault is active, the model reads one snapshot of the 52 variables and names one of the 20 fault types.
+    Pick a model and see which faults it recognizes, which it confuses, and how quickly it settles on the right answer.</p>
+  <nav class="toc">
+    <a href="#overall">1 · Overall accuracy</a>
+    <a href="#matrix">2 · What gets confused</a>
+    <a href="#perfault">3 · Fault by fault</a>
+    <a href="#speed">4 · How quickly</a>
+  </nav>
+</div></header>
+
+<main>
+  <p class="note" id="data-note"></p>
+  <div id="modelbar"></div>
+
+  <section class="card" id="overall">
+    <h2><span class="num">1</span>Overall accuracy</h2>
+    <p class="intro">Evaluated on every validation row where a fault is active. All 20 fault types have the same number of rows,
+      so the majority baseline (always guess one fault) is right 5% of the time.</p>
+    <div class="tiles" id="tiles"></div>
+    <p class="callout" id="callout"></p>
+  </section>
+
+  <section class="card" id="matrix">
+    <h2><span class="num">2</span>What gets confused with what</h2>
+    <p class="intro">Each row is the true fault, each column the model's answer. Numbers are the percentage of that fault's rows,
+      so a perfect model would fill only the diagonal. Click a row to see where its rows end up.</p>
+    <div class="split">
+      <div class="plot"><div id="chart-matrix"></div></div>
+      <div class="panel" id="row-panel"></div>
+    </div>
+  </section>
+
+  <section class="card" id="perfault">
+    <h2><span class="num">3</span>Fault by fault</h2>
+    <p class="intro">Recall per fault: the share of each fault's rows the model names correctly. The dashed line is chance (5%).</p>
+    <div class="plot"><div id="chart-recall"></div></div>
+  </section>
+
+  <section class="card" id="speed">
+    <h2><span class="num">4</span>How quickly is the right fault named?</h2>
+    <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model names the correct fault
+      3 times in a row. Faded bars mean this happened in only some runs.</p>
+    <div class="split">
+      <div class="plot"><div id="chart-speed"></div></div>
+      <div class="panel"><div class="tiles" id="tiles-speed"></div>
+        <p class="note" style="margin:12px 0 0">Three correct answers in a row can also happen by chance for a fault the model
+          barely recognizes, especially over a long run. Long delays with a low share of runs should be read as "not reliably diagnosed".</p></div>
+    </div>
+  </section>
+</main>
+<footer></footer>
+</body>
+</html>

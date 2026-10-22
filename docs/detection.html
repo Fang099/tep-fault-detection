@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detection | TEP Fault Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/pages/detection.js"></script>
+</head>
+<body data-page="detection">
+<nav id="topnav"></nav>
+<header class="page-head"><div class="inner">
+  <div class="kicker">Task 1 · Fault detection</div>
+  <h1>Is a fault happening right now?</h1>
+  <p class="lede">Each model reads one 3-minute snapshot of the 52 process variables and outputs a fault score.
+    An alarm goes off when the score passes a threshold. Pick a model, move the threshold, and see what it catches and what it misses.</p>
+  <nav class="toc">
+    <a href="#threshold">1 · The alarm threshold</a>
+    <a href="#scores">2 · Why errors happen</a>
+    <a href="#roc">3 · Every threshold at once</a>
+    <a href="#faults">4 · Fault by fault</a>
+    <a href="#speed">5 · How quickly</a>
+  </nav>
+</div></header>
+
+<main>
+  <p class="note" id="data-note"></p>
+  <div id="modelbar"></div>
+
+  <section class="card" id="threshold">
+    <h2><span class="num">1</span>The alarm threshold</h2>
+    <p class="intro">Rows above the threshold raise an alarm. Lowering it catches more faults but also raises more false alarms
+      on normal operation. Every model on this site is compared at the threshold that gives 5% false alarms on validation data.</p>
+    <div class="split">
+      <div class="plot">
+        <div class="plot-title">Confusion matrix (validation rows)</div>
+        <div id="cm"></div>
+      </div>
+      <div class="panel">
+        <div class="control">
+          <div class="control-head"><span>Threshold on the fault score</span><span class="val" id="th-val"></span></div>
+          <input type="range" id="th" min="0" value="0">
+          <div class="ticks"><span>alarm on everything</span><span>alarm on nothing</span></div>
+        </div>
+        <div class="control">
+          <div class="control-head">Set the false alarm rate to</div>
+          <div class="seg" id="far-buttons"><button data-far="0.01">1%</button><button data-far="0.05">5%</button><button data-far="0.1">10%</button><button data-far="0.2">20%</button></div>
+        </div>
+        <div class="tiles" id="tiles"></div>
+      </div>
+    </div>
+    <p class="callout" id="callout-threshold"></p>
+  </section>
+
+  <section class="card" id="scores">
+    <h2><span class="num">2</span>Why errors happen: overlapping scores</h2>
+    <p class="intro">How the model's scores are distributed for normal rows and for faulty rows. Wherever the two overlap, no threshold
+      can separate them: anything left of the line is called normal, anything right of it raises an alarm.
+      Click a fault in section 4 to add its rows to this chart.</p>
+    <div class="plot">
+      <div id="legend-scores"></div>
+      <div id="chart-scores"></div>
+    </div>
+    <p class="callout" id="callout-scores"></p>
+  </section>
+
+  <section class="card" id="roc">
+    <h2><span class="num">3</span>Every threshold at once: the ROC curve</h2>
+    <p class="intro">Each point on the curve is one threshold: the share of faulty rows caught against the share of normal rows that
+      raise a false alarm. A useless model follows the diagonal. The dot is your current threshold.</p>
+    <div class="split">
+      <div class="plot"><div id="chart-roc"></div></div>
+      <div class="panel"><div class="tiles" id="tiles-roc"></div>
+        <p class="note" style="margin:12px 0 0">PR-AUC summarizes precision against recall over all thresholds. Because 91% of validation rows are
+          faulty, even the majority baseline scores about 0.91 on it, so ROC-AUC and the false alarm rate are more informative here.</p></div>
+    </div>
+  </section>
+
+  <section class="card" id="faults">
+    <h2><span class="num">4</span>Fault by fault</h2>
+    <p class="intro">Share of each fault's rows caught at the current threshold. Some faults barely change the measurements and are
+      nearly impossible to see in a single snapshot. Click a fault for details.</p>
+    <div class="split">
+      <div class="plot"><div id="chart-faults"></div></div>
+      <div class="panel" id="fault-panel"></div>
+    </div>
+  </section>
+
+  <section class="card" id="speed">
+    <h2><span class="num">5</span>How quickly is a fault detected?</h2>
+    <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model raises
+      3 alarms in a row. Bars show the median over runs; faded bars mean the fault was detected in only some runs.
+      These were computed in advance at fixed false alarm rates, so they don't follow the threshold slider.</p>
+    <div class="split">
+      <div class="plot"><div id="chart-speed"></div></div>
+      <div class="panel">
+        <div class="control"><div class="control-head">False alarm rate</div>
+          <div class="seg" id="speed-far"><button data-far="0.01">1%</button><button data-far="0.05" class="on">5%</button><button data-far="0.1">10%</button></div></div>
+        <div class="tiles" id="tiles-speed"></div>
+      </div>
+    </div>
+    <p class="callout"><b>Read long delays with care.</b> At a 5% false alarm rate, a normal process also raises occasional alarms, and over
+      many hours three in a row eventually happen by chance. Faults that are only "detected" after many hours, in some runs, are likely
+      such chance alarms rather than real detections. A reference measured on fault-free runs will be added to separate the two.</p>
+  </section>
+</main>
+<footer></footer>
+</body>
+</html>

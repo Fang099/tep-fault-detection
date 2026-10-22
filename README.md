@@ -60,4 +60,7 @@ on re-runs, so an interrupted run can be restarted.
 |---|---|
 | `tep_pipeline.py` | Data loading, training, evaluation and website export |
 | `run_colab.ipynb` | Short notebook that runs the pipeline on Colab |
-| `docs/` | Project website (GitHub Pages) |
+| `docs/` | Project website (GitHub Pages): plain HTML, CSS and JavaScript |
+| `docs/data/` | Exported results the website reads (copied from `web_data/`) |
+
+To preview the website locally: `cd docs && python -m http.server`, then open http://localhost:8000.

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare | TEP Fault Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/pages/compare.js"></script>
+</head>
+<body data-page="compare">
+<nav id="topnav"></nav>
+<header class="page-head"><div class="inner">
+  <div class="kicker">Model comparison</div>
+  <h1>Model A against model B</h1>
+  <p class="lede">Pick any two models and compare them on the same validation runs. Detection models are compared at the threshold
+    that gives each one 5% false alarms, so neither gets an unfair advantage from a looser alarm setting.</p>
+  <nav class="toc">
+    <a href="#head">1 · Head to head</a>
+    <a href="#faults">2 · Fault by fault</a>
+    <a href="#speed">3 · How quickly</a>
+    <a href="#table">4 · Every model</a>
+  </nav>
+</div></header>
+
+<main>
+  <p class="note" id="data-note"></p>
+  <div class="modelbar" id="pickers">
+    <div class="control"><div class="control-head">Task</div>
+      <div class="seg" id="task"><button data-v="detection" class="on">Detection</button><button data-v="diagnosis">Diagnosis</button></div></div>
+    <div class="control grow"><div class="control-head"><span><span class="badge">A</span> Model A</span></div><select id="pick-a"></select></div>
+    <div class="control grow"><div class="control-head"><span><span class="badge purple">B</span> Model B</span></div><select id="pick-b"></select></div>
+    <div class="control"><button class="btn" id="swap">Swap A and B</button></div>
+  </div>
+
+  <section class="card" id="head">
+    <h2><span class="num">1</span>Head to head</h2>
+    <p class="intro" id="head-intro"></p>
+    <div class="table-wrap"><table id="head-table"></table></div>
+    <p class="callout" id="head-callout"></p>
+  </section>
+
+  <section class="card" id="faults">
+    <h2><span class="num">2</span>Fault by fault</h2>
+    <p class="intro" id="faults-intro"></p>
+    <div class="plot"><div id="legend-faults"></div><div id="chart-faults"></div></div>
+  </section>
+
+  <section class="card" id="speed">
+    <h2><span class="num">3</span>How quickly</h2>
+    <p class="intro" id="speed-intro"></p>
+    <div class="plot"><div id="legend-speed"></div><div id="chart-speed"></div></div>
+  </section>
+
+  <section class="card" id="table">
+    <h2><span class="num">4</span>Every model</h2>
+    <p class="intro">All trained models for this task, ranked on validation. Click a column to sort, or use the buttons to load a model as A or B.</p>
+    <div class="table-wrap"><table id="all-table"></table></div>
+  </section>
+</main>
+<footer></footer>
+</body>
+</html>

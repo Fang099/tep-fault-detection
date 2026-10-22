@@ -1,3 +1,123 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>TEP Fault Detection</title></head>
-<body><p>Website coming soon.</p></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TEP Fault Detection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/pages/overview.js"></script>
+</head>
+<body data-page="overview">
+<nav id="topnav"></nav>
+<header class="page-head"><div class="inner">
+  <div class="kicker">ES 335 · Machine Learning project</div>
+  <h1>Detecting and diagnosing faults in a chemical plant</h1>
+  <p class="lede">How effective are different machine learning models at detecting and diagnosing faults in the Tennessee Eastman
+    Process from instantaneous process measurements, and how quickly can a fault be detected?</p>
+  <nav class="toc">
+    <a href="#tasks">1 · Two tasks</a>
+    <a href="#process">2 · The process</a>
+    <a href="#data">3 · The data</a>
+    <a href="#labels">4 · Labels</a>
+    <a href="#protocol">5 · How models are judged</a>
+    <a href="#results">6 · Results so far</a>
+  </nav>
+</div></header>
+
+<main>
+  <section class="card" id="tasks">
+    <h2><span class="num">1</span>Two tasks</h2>
+    <p class="intro">Industrial process faults can reduce product quality, disrupt operations and create safety risks.
+      An operator needs to know two things, quickly and reliably.</p>
+    <div class="cards-grid">
+      <a class="linkcard" href="detection.html"><b>1 · Detection</b><span>Is a fault happening right now? A yes/no answer from a single
+        3-minute snapshot of the plant, judged on how many faults it catches against how many false alarms it raises.</span></a>
+      <a class="linkcard" href="diagnosis.html"><b>2 · Diagnosis</b><span>Which of the 20 fault types is it? Judged on how evenly well it
+        names every fault (macro-F1), and which faults it confuses.</span></a>
+    </div>
+    <p class="callout"><b>Instantaneous measurements only.</b> Every model sees one row at a time: the 52 process variables at a single
+      moment, with no history. That keeps the models simple and comparable, and it is also the main limitation: some faults only
+      show up as slow drifts that a single snapshot can't reveal.</p>
+  </section>
+
+  <section class="card" id="process">
+    <h2><span class="num">2</span>The Tennessee Eastman Process</h2>
+    <p class="intro">A realistic simulation of a chemical plant published by Eastman Chemical Company (Downs and Vogel, 1993) and a
+      standard benchmark for process monitoring. Four gaseous reactants (A, C, D, E) react to form two liquid products (G and H) in a
+      plant with five main units: a reactor, a condenser, a vapour-liquid separator, a recycle compressor and a product stripper.</p>
+    <div class="split even">
+      <div>
+        <h3>52 variables, recorded every 3 minutes</h3>
+        <ul class="tight">
+          <li><b>41 measurements</b> (<code>xmeas_1</code>–<code>xmeas_41</code>): flows, pressures, levels and temperatures (1–22),
+            plus gas compositions from analyzers (23–41).</li>
+          <li><b>11 manipulated variables</b> (<code>xmv_1</code>–<code>xmv_11</code>): the valve positions the control system sets.</li>
+        </ul>
+        <details><summary>All 52 variables</summary><div class="table-wrap"><table id="var-table"></table></div></details>
+      </div>
+      <div>
+        <h3>20 programmed faults</h3>
+        <p class="note" style="margin-top:0">Steps (sudden changes), random variations, a slow drift, sticking valves, and five faults of unknown type.</p>
+        <details><summary>All 20 faults</summary><div class="table-wrap"><table id="fault-table"></table></div></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="data">
+    <h2><span class="num">3</span>The data</h2>
+    <p class="intro">From the Kaggle dataset <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>
+      (Rieth et al., 2017). One row is one 3-minute time step of one simulation run.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>File</th><th class="n">Runs</th><th class="n">Samples per run</th><th class="n">Rows</th><th>Fault starts after</th></tr></thead>
+      <tbody>
+        <tr><td>Fault-free training</td><td class="n">500</td><td class="n">500</td><td class="n">250,000</td><td>never</td></tr>
+        <tr><td>Faulty training</td><td class="n">20 × 500</td><td class="n">500</td><td class="n">5,000,000</td><td>sample 20 (1 hour)</td></tr>
+        <tr><td>Fault-free testing</td><td class="n">500</td><td class="n">960</td><td class="n">480,000</td><td>never</td></tr>
+        <tr><td>Faulty testing</td><td class="n">20 × 500</td><td class="n">960</td><td class="n">9,600,000</td><td>sample 160 (8 hours)</td></tr>
+      </tbody></table></div>
+    <div class="tiles" id="data-tiles" style="margin-top:14px"></div>
+  </section>
+
+  <section class="card" id="labels">
+    <h2><span class="num">4</span>Labels: when is a row "faulty"?</h2>
+    <p class="intro">A faulty run starts out normal; the fault is switched on partway through. Rows before that moment are labelled
+      normal, rows after it faulty. Fault-free runs are normal throughout.</p>
+    <div id="timelines"></div>
+    <p class="callout"><b>A consequence:</b> faulty rows outnumber normal ones roughly ten to one, so a model that always answers "fault"
+      already scores an F1 of about 0.96. That's why this site reports false alarms and recall on normal operation alongside the usual metrics.</p>
+  </section>
+
+  <section class="card" id="protocol">
+    <h2><span class="num">5</span>How models are judged</h2>
+    <ul class="tight">
+      <li><b>Split by simulation run, never by row.</b> Neighbouring rows of one run are nearly identical, so a row-level split would leak
+        answers. Within each fault type, 80% of runs train the models and 20% validate them.</li>
+      <li><b>Choices are made on validation.</b> Decision thresholds and the best model of each kind are picked using the validation runs only.</li>
+      <li><b>The test files are used once.</b> The chosen models are retrained on all training runs and evaluated a single time on the
+        separate test files, keeping the thresholds chosen on validation.</li>
+      <li><b>A common operating point.</b> Detection models are compared at the threshold that gives each one 5% false alarms on
+        normal validation rows.</li>
+    </ul>
+    <p class="note" id="subset-note"></p>
+  </section>
+
+  <section class="card" id="results">
+    <h2><span class="num">6</span>Results so far</h2>
+    <p class="intro" id="results-intro"></p>
+    <div class="tiles" id="result-tiles"></div>
+    <h3>Explore</h3>
+    <div class="cards-grid">
+      <a class="linkcard" href="detection.html"><b>Detection explorer</b><span>Move the alarm threshold, see what each model catches.</span></a>
+      <a class="linkcard" href="diagnosis.html"><b>Diagnosis explorer</b><span>See which faults get confused with which.</span></a>
+      <a class="linkcard" href="regularization.html"><b>Regularization</b><span>Lasso and ridge paths: which sensors survive.</span></a>
+      <a class="linkcard" href="compare.html"><b>Compare</b><span>Any two models side by side, and every model ranked.</span></a>
+      <a class="linkcard" href="results.html"><b>Results and limitations</b><span>Test results, findings and what doesn't work.</span></a>
+      <a class="linkcard" href="reproduce.html"><b>Reproduce</b><span>Run everything yourself.</span></a>
+    </div>
+  </section>
+</main>
+<footer></footer>
+</body>
+</html>
