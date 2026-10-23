@@ -214,7 +214,8 @@
   <section class="section" id="protocol" data-toc="How models are judged">
     <h2>How models are judged</h2>
     <ul class="tight">
-      <li><b>Split by simulation run, never by row.</b> Within each fault type, 80% of runs train the models and 20% validate them.</li>
+      <li><b>Split by simulation, never by row.</b> 80% of the simulations train the models and 20% validate them, the same
+        simulations for every fault type, so no copy of a validation run's readings is ever seen in training.</li>
       <li><b>Choices are made on validation.</b> Decision thresholds and the best model of each kind are picked using the validation runs only.</li>
       <li><b>The test files are used once.</b> The chosen models are retrained on all training runs and evaluated a single time on the
         separate test files, keeping the thresholds chosen on validation.</li>
@@ -231,6 +232,11 @@
           learning what a fault looks like.</p>
         <p>Splitting by run keeps every run entirely on one side. Validation then asks the honest question: how does the model do on a
           run it has never seen? That is the situation a real plant is in.</p>
+        <p>There is a second, less obvious trap in this dataset. Faulty run 7 of every fault type is fault-free run 7 with a fault
+          switched on after one hour: until then, and often for a while after, the readings are identical to the last decimal. If
+          fault 3's run 7 were in validation while fault 5's run 7 were in training, the model would already have seen those rows.
+          So the split is made on the simulation number: all 21 versions of run 7 go to the same side. The pipeline counts the
+          validation rows that exactly match a training row, and the count is shown in the data quality checks above.</p>
       </div>
     </details>
   </section>

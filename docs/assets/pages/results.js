@@ -36,16 +36,39 @@ function renderFindings(manifest) {
   const noneDia = dia.find(m => m.penalty === "none");
   const lassoSmall = det.filter(m => m.penalty === "l1" && m.coef_nonzero > 0).sort((a, b) => a.coef_nonzero - b.coef_nonzero)[0];
 
-  const nonlinear = familyOf(best) !== "logreg" && lrDet;
   const items = [
-    nonlinear ? `<b>Non-linear models do better than logistic regression.</b> The best detection model, ${esc(best.label)}, catches
-     ${pct(best.val.recall)} of faulty rows at 5% false alarms against ${pct(lrDet.val.recall)} for the best logistic regression.
-     ${lrDia && familyOf(bestD) !== "logreg" ? `For diagnosis, ${esc(bestD.label)} reaches macro-F1 ${num(bestD.val.macro_F1, 3)} against
-     ${num(lrDia.val.macro_F1, 3)}.` : ""} Some faults change the readings in ways no single weighted sum can separate.` : "",
+    (() => {
+      // Like-for-like: best non-linear vs best logistic regression, with the same inputs.
+      const all = manifest.detection.models, allD = manifest.diagnosis.models;
+      const pick = (ms, fs, lin, key) => {
+        const c = ms.filter(m => (m.features || "inst") === fs && familyOf(m) !== "baseline" && (familyOf(m) === "logreg") === lin);
+        return c.length ? c.reduce((a, b) => (key(b) > key(a) ? b : a)) : null;
+      };
+      const rec = m => m.val.recall, f1 = m => m.val.macro_F1;
+      const nlI = pick(all, "inst", false, rec), lrI = pick(all, "inst", true, rec);
+      if (!nlI || !lrI || rec(nlI) <= rec(lrI)) return "";
+      const nlH = pick(all, "hist", false, rec), lrH = pick(all, "hist", true, rec);
+      const dI = [pick(allD, "inst", false, f1), pick(allD, "inst", true, f1)];
+      let t = `<b>Non-linear models beat logistic regression on single snapshots.</b> At 5% false alarms the best of them,
+        ${esc(nlI.label)}, catches ${pct(rec(nlI))} of faulty rows against ${pct(rec(lrI))} for the best logistic regression.`;
+      if (dI[0] && dI[1]) t += ` For diagnosis: macro-F1 ${num(f1(dI[0]), 3)} against ${num(f1(dI[1]), 3)}.`;
+      if (nlH && lrH) t += ` With 30 minutes of history the gap shrinks to ${pct(rec(nlH))} against ${pct(rec(lrH))}: much of what the
+        trees gain from non-linear splits, a linear model can get from rolling means and standard deviations.`;
+      return t;
+    })(),
+    (() => {
+      const pm = bestModel(manifest, "detection", "pcamon");
+      if (!pm || !lrDet) return "";
+      const lrInst = det.filter(m => familyOf(m) === "logreg").reduce((x, y) => (y.val.recall > x.val.recall ? y : x));
+      return `<b>The label-free textbook method is a strong baseline.</b> PCA monitoring (${esc(pm.label)}) never sees a fault label,
+        yet catches ${pct(pm.val.recall)} of faulty rows at 5% false alarms, ${pm.val.recall > lrInst.val.recall ? "more than" : "against"}
+        ${pct(lrInst.val.recall)} for the best logistic regression on the same snapshots. Supervised non-linear models still do better
+        because they learn what each fault looks like. See <a href="${modelLink("detection.html", pm)}">PCA monitoring</a>.`;
+    })(),
     `<b>Accuracy and F1 are misleading here.</b> The majority baseline scores F1 ${num(base.val.F1, 3)} by alarming on every row,
      including every normal one. Compared at 5% false alarms, it catches nothing.`,
     `<b>The best detection model (${esc(best.label)}) catches ${pct(best.val.recall)} of faulty rows at 5% false alarms</b>
-     (ROC-AUC ${num(best.val.ROC_AUC, 3)}). Roughly half of all faulty rows look normal in a single snapshot.`,
+     (ROC-AUC ${num(best.val.ROC_AUC, 3)}). The remaining ${pct(1 - best.val.recall, 0)} of faulty rows look normal to it, mostly from the faults that barely change the readings.`,
     noneU && noneB ? `<b>Class weighting matters only a little.</b> Without a penalty, balanced weights catch ${pct(noneB.val.recall)} against
      ${pct(noneU.val.recall)} unweighted. At a fixed false-alarm rate, weighting mostly moves the threshold rather than changing the ranking of rows.` : "",
     (() => {
@@ -66,7 +89,7 @@ function renderFindings(manifest) {
     (() => {
       const all = manifest.detection.models, h = all.filter(m => m.features === "hist");
       if (!h.length) return "";
-      const bi = all.filter(inst).reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
+      const bi = all.filter(m => inst(m) && familyOf(m) !== "baseline").reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
       const bh = h.reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
       const d = bh.val.recall - bi.val.recall;
       return d > 0.005

@@ -653,11 +653,23 @@ function renderCalibration() {
   });
   $("tiles-calib").innerHTML = [tile("Brier score", num(cal.brier, 3), "0 is perfect"), tile("ECE", num(cal.ece, 3), "0 is perfect")].join("");
   $("calib-note").textContent = "Hover over a dot to see how many samples it holds; dots built from few samples are less reliable.";
-  const gap = pts.reduce((a, [p, f, n]) => a + (f - p) * n, 0) / pts.reduce((a, x) => a + x[2], 0);
-  $("callout-calib").innerHTML = Math.abs(gap) < 0.03
-    ? `<b>Close to calibrated:</b> on average the scores match the true share of faults within ${pct(Math.abs(gap), 0)}.`
+  const total = pts.reduce((a, x) => a + x[2], 0);
+  const gap = pts.reduce((a, [p, f, n]) => a + (f - p) * n, 0) / total;
+  // The bin furthest from the diagonal among bins holding at least 0.5% of samples.
+  const big = pts.filter(x => x[2] >= 0.005 * total);
+  const worst = big.length ? big.reduce((a, x) => (Math.abs(x[1] - x[0]) > Math.abs(a[1] - a[0]) ? x : a)) : null;
+  const worstText = worst && Math.abs(worst[1] - worst[0]) >= 0.1
+    ? ` The biggest mismatch: samples scored around ${num(worst[0], 2)} (${pct(worst[2] / total)} of all samples) are faulty
+       ${pct(worst[1], 0)} of the time, so a score there ${worst[1] < worst[0] ? "overstates" : "understates"} the risk.`
+    : "";
+  $("callout-calib").innerHTML = (cal.ece < 0.02
+    ? `<b>Well calibrated overall</b> (ECE ${num(cal.ece, 3)}): averaged over all samples, scores match the true share of faults within ${pct(cal.ece)}.
+       Most samples get scores near 0 or 1, where the model is right, so this average is dominated by them.`
+    : Math.abs(gap) < 0.01
+      ? `<b>Off in both directions</b> (ECE ${num(cal.ece, 3)}): some score ranges overstate the risk and others understate it, so the
+         errors cancel in the overall average but not bin by bin.`
     : gap > 0
       ? `<b>The scores are too low:</b> samples are faulty ${pct(gap, 0)} more often, on average, than the scores say.
          ${state.model.class_weight === "balanced" ? "That is the expected effect of balanced class weighting, which deliberately pulls scores down when most samples are faulty." : ""}`
-      : `<b>The scores are too high:</b> samples are faulty ${pct(-gap, 0)} less often, on average, than the scores say.`;
+      : `<b>The scores are too high:</b> samples are faulty ${pct(-gap, 0)} less often, on average, than the scores say.`) + worstText;
 }

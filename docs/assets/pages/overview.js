@@ -118,16 +118,23 @@ const short = v => v.replace("xmeas_", "m").replace("xmv_", "v");
 function initExplore() {
   const { summary, traces } = ex;
   const q = summary.quality;
+  const copies = q.val_rows_copied_from_train;
   $("quality-tiles").innerHTML = [
     tile("Rows checked", int(q.rows), `${int(q.runs)} runs`),
     tile("Missing values", int(q.missing_values)),
-    tile("Duplicate rows", int(q.duplicate_rows)),
+    tile("Repeated rows", int(q.duplicate_rows), q.rows ? `${pct(q.duplicate_rows / q.rows)} of rows` : ""),
     tile("Constant variables", String(q.constant_columns.length)),
     tile("Normal / faulty rows", `${pct(q.class_counts.normal / q.rows, 0)} / ${pct(q.class_counts.faulty / q.rows, 0)}`),
+    ...(copies != null ? [tile("Validation rows also in training", int(copies), copies === 0 ? "leakage check passed" : "should be 0", copies === 0 ? "" : "warn")] : []),
   ].join("");
-  $("quality-note").textContent = q.missing_values === 0 && q.constant_columns.length === 0
-    ? "The simulated data is complete: nothing needed imputing or dropping. The real issues are the strong correlation between neighbouring samples (handled by splitting by run) and the class imbalance (handled by the choice of metrics)."
-    : "Some quality issues were found; see the counts above.";
+  $("quality-note").innerHTML = `${q.missing_values === 0 && q.constant_columns.length === 0
+    ? "Nothing is missing and no variable is constant, so nothing needed imputing or dropping."
+    : "Some quality issues were found; see the counts above."}
+    ${q.duplicate_rows > 0 ? ` The repeated rows are not errors: every faulty run starts as an exact copy of the fault-free run with the
+      same simulation number, and stays identical until the fault starts to show. They are kept (they are genuine normal readings),
+      but they decide how the data is split: <a href="#protocol">all copies of a simulation stay on the same side</a>.` : ""}
+    The other real issues are the strong correlation between neighbouring samples (handled by splitting by run) and the class
+    imbalance (handled by the choice of metrics).`;
 
   const faults = traces.runs.filter(r => r.fault > 0).map(r => r.fault);
   $("trace-fault").innerHTML = faults.map(f => `<option value="${f}">Fault ${f}: ${esc(FAULTS[f][0])} (${FAULTS[f][1].toLowerCase()})</option>`).join("");

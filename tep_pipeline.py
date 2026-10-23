@@ -110,7 +110,7 @@ DATA_DIR = Path(args.work_dir) if args.work_dir else DRIVE_DIR
 RUNS_PER_FAULT = args.runs_per_fault or None                 # None = all runs
 OUT_DIR = Path(args.out_dir or DRIVE_DIR) / ("outputs_full" if RUNS_PER_FAULT is None
                                               else f"outputs_{RUNS_PER_FAULT}runs")
-MODEL_DIR = OUT_DIR / "models"
+MODEL_DIR = OUT_DIR / "models_v3"                   # v3: split by simulation number (older models used a leaky split)
 WEB_DIR = OUT_DIR / "web_data"                               # everything the website needs
 for d in (DATA_DIR, MODEL_DIR, WEB_DIR / "detection", WEB_DIR / "diagnosis"):
     d.mkdir(parents=True, exist_ok=True)
@@ -162,7 +162,7 @@ HIST_WINDOW = 10                                  # 10 samples = 30 minutes of h
 HIST_LR_PENALTIES = ["none", "l2"]                # lasso is slow on 156 inputs, so history LR uses none/ridge
 HIST_XGB_DEPTHS = [4, 8]                          # XGBoost with history: fewer depths to keep run time down
 BOOTSTRAP = 200                                   # run-level bootstrap resamples for 95% intervals
-EXPORT_VERSION = 2                                # bump when the exported files gain new content
+EXPORT_VERSION = 3                                # bump when the exported files gain new content
 
 FAMILIES = [f.strip() for f in args.families.split(",") if f.strip()]
 HISTORY = [f.strip() for f in args.history_families.split(",") if f.strip()]
@@ -229,19 +229,30 @@ QUALITY = {
 print(train_all["target"].value_counts().rename("rows"))
 
 # ====================================================================================================
-# ## 2. Train / validation split by run
-# Stratified on `faultNumber` (0 = fault-free), so each fault type keeps 80% of its runs for training and 20% for
-# validation.
+# ## 2. Train / validation split by simulation number
+# In this dataset, faulty run k of every fault type is the fault-free run k with the fault switched on: up to the
+# fault onset (and for a while after it, until the fault shows) the 52 readings are identical, row for row.
+# Splitting by (faultNumber, simulationRun) would therefore put exact copies of validation rows into training.
+# Instead, 20% of the simulation numbers go to validation for every fault type at once, so all copies of a
+# simulation stay on the same side. Each fault type still keeps 80% of its runs for training.
 
-runs = train_all[["run_id", "faultNumber"]].drop_duplicates()
-train_run_ids, val_run_ids = train_test_split(
-    runs["run_id"], test_size=0.2, stratify=runs["faultNumber"], random_state=SEED
-)
-is_val = train_all["run_id"].isin(val_run_ids)
+sim_numbers = np.sort(train_all["simulationRun"].unique())
+_, val_sims = train_test_split(sim_numbers, test_size=0.2, random_state=SEED)
+is_val = train_all["simulationRun"].isin(val_sims)
 train_df = train_all[~is_val].reset_index(drop=True)
 val_df = train_all[is_val].reset_index(drop=True)
 del train_all
 assert set(train_df["run_id"]).isdisjoint(val_df["run_id"])
+assert set(train_df["simulationRun"]).isdisjoint(val_df["simulationRun"])
+
+
+def row_hashes(df):
+    return pd.util.hash_pandas_object(df[FEATURES], index=False).to_numpy()
+
+
+# Leakage check: how many validation rows also appear, reading for reading, in training? Should be 0.
+QUALITY["val_rows_copied_from_train"] = int(np.isin(row_hashes(val_df), row_hashes(train_df)).sum())
+print("Validation rows identical to a training row:", QUALITY["val_rows_copied_from_train"])
 
 y_val = val_df["target"].to_numpy()
 faults_val = val_df["faultNumber"].to_numpy()
@@ -1045,7 +1056,7 @@ def write_manifest(test_results=None):
             "val_rows": int(len(val_df)), "val_fault_share": float(y_val.mean()),
             "fault_onset": FAULT_ONSET, "sample_minutes": SAMPLE_MINUTES,
         },
-        "settings": {"C_grid": C_GRID, "class_weights": [c or "none" for c in CLASS_WEIGHTS],
+        "settings": {"split": "simulation_number", "C_grid": C_GRID, "class_weights": [c or "none" for c in CLASS_WEIGHTS],
                      "selection_far": SELECTION_FAR, "far_levels": FAR_LEVELS, "consecutive": CONSECUTIVE,
                      "det_stride": DET_STRIDE, "diag_stride": DIAG_STRIDE, "rf_sample": RF_SAMPLE,
                      "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2,
@@ -1141,7 +1152,9 @@ if args.final_test:
     faults_test = test_df["faultNumber"].to_numpy()
     runs_test, samples_test = test_df["run_id"].to_numpy(), test_df["sample"].to_numpy()
     test_post = y_test == 1
-    test_results = {"rows": int(len(test_df)), "fault_share": float(y_test.mean()),
+    test_copies = int(np.isin(row_hashes(test_df), row_hashes(full_df)).sum())
+    print("Test rows identical to a training row:", test_copies)
+    test_results = {"rows": int(len(test_df)), "fault_share": float(y_test.mean()), "rows_copied_from_train": test_copies,
                     "runs_per_fault": TEST_RUNS_PER_FAULT, "detection": {}, "diagnosis": {}}
 
     chosen = [("detection", best_det), ("detection", next(s for s in det_summaries if s["family"] == "baseline")),

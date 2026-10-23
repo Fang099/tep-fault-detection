@@ -23,8 +23,10 @@ One row is one 3-minute time step of one simulation run. The models use only the
 
 - **Labels:** fault-free rows and rows before the fault is injected (after sample 20 in training, sample 160 in
   testing) are normal; rows after injection are faulty.
-- **Split:** the training files are split by simulation run, 80% train / 20% validation within each fault type,
-  so no run appears on both sides. The test files are used once, at the end.
+- **Split:** the training files are split by simulation number, 80% train / 20% validation. Faulty run *k* of every
+  fault type starts as an exact copy of fault-free run *k* (identical readings until the fault shows), so all runs
+  with the same simulation number go to the same side. The pipeline checks that no validation row is identical to a
+  training row. The test files are used once, at the end.
 - **Models:** majority-class baselines; logistic regression with no penalty, lasso (L1) and ridge (L2) at several
   strengths `C`, with and without class weighting (detection); decision trees (depth); random forests (depth, number
   of trees); gradient boosting, AdaBoost and XGBoost (tree depth, boosting rounds). Forests and boosted models are

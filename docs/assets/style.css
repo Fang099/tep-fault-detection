@@ -174,6 +174,7 @@ main { min-width: 0; padding: 28px 0 70px; }
 .tile .sub { font-size: 12.5px; color: var(--muted); line-height: 1.35; margin-top: 1px; }
 .tile.big .value { font-size: 27px; }
 .tile.text .value { white-space: normal; font-size: 16.5px; line-height: 1.3; }
+.tile.warn .value { color: var(--c-fault); }
 .delta-up { color: var(--c-l2); font-weight: 600; }
 .delta-down { color: var(--c-fault); font-weight: 600; }
 
