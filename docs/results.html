@@ -28,7 +28,10 @@
 
   <section class="section" id="families" data-toc="Best of each model">
     <h2>The best of each model</h2>
-    <p class="intro">For every model family, the settings that scored best on validation. Click a model to open it in its explorer.</p>
+    <p class="intro">For every model family, the settings that scored best on validation. Click a model to open it in its explorer.
+      Change the false alarm rate to see whether the ranking depends on it; the official choice stays at 5%.</p>
+    <div class="control" style="margin-bottom:6px"><div class="control-head">Detection false alarm rate (★ = official)</div><div id="fam-far"></div></div>
+    <p class="note" id="fam-status" style="margin:4px 0 10px"></p>
     <div class="plot"><div id="legend-families"></div><div id="chart-families"></div></div>
     <div class="table-wrap" style="margin-top:14px"><table id="families-table"></table></div>
   </section>
@@ -42,8 +45,8 @@
   <section class="section" id="limits" data-toc="Limitations">
     <h2>Limitations</h2>
     <ul class="tight">
-      <li><b>One snapshot at a time.</b> Models see the 52 variables at a single moment. Faults that show up as slow drifts or changes in
-        variability are hard or impossible to see this way.</li>
+      <li><b>Short memory.</b> Most models see the 52 variables at a single moment; the history versions add only the last 30 minutes as
+        rolling means and standard deviations. Faults that drift over hours, or change the plant's dynamics in subtler ways, remain hard to see.</li>
       <li><b>Some faults are invisible to these variables.</b> Faults 3, 9 and 15 are widely reported as nearly undetectable in the TEP
         literature, because they barely change the statistics of the measured data. Low scores on them are expected.</li>
       <li><b>Detection delays can include chance alarms.</b> At a 5% false-alarm rate, three alarms in a row eventually happen on normal

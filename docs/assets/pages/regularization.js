@@ -57,7 +57,8 @@ const fmtMetric = (task, v) => (task === "detection" ? pct(v) : num(v, 3));
 function renderPerformance() {
   const { manifest, task } = state;
   const grid = manifest.settings.C_grid;
-  const models = manifest[task].models;
+  // Regularization is studied on logistic regression with instantaneous inputs.
+  const models = manifest[task].models.filter(m => (m.family || "logreg") === "logreg" && (m.features || "inst") === "inst");
   const weightings = task === "detection" ? ["balanced", "none"] : [null];
   const series = [], hlines = [], items = [];
   for (const pen of ["l1", "l2"]) {

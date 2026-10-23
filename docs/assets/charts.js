@@ -288,7 +288,8 @@ export function barChart(el, spec) {
 }
 
 // ---------- Heatmap ----------
-// spec: { matrix:[[v]] (0..1), rowLabels, colLabels, rowTitle, colTitle, highlightRow, tip:(r,c)=>html, onClick:(r,c)=>void }
+// spec: { matrix:[[v]] (0..1, or -1..1 with diverging), rowLabels, colLabels, rowTitle, colTitle, highlightRow,
+//         diverging, labelEvery, diagonal (outline the diagonal, default true), ariaLabel, tip:(r,c)=>html, onClick:(r,c)=>void }
 export function heatmap(el, spec) {
   keepResponsive(el, () => {
     const n = spec.matrix.length, mcols = spec.matrix[0].length;
@@ -297,22 +298,23 @@ export function heatmap(el, spec) {
     const cell = Math.floor(Math.min((W - m.left - m.right) / mcols, 30));
     const w = cell * mcols, h = cell * n;
     const svg = svgEl("svg", { viewBox: `0 0 ${w + m.left + m.right} ${h + m.top + m.bottom}`, class: "chart",
-                               style: `max-width:${w + m.left + m.right}px`, role: "img", "aria-label": "confusion matrix" });
+                               style: `max-width:${w + m.left + m.right}px`, role: "img", "aria-label": spec.ariaLabel || "confusion matrix" });
     el.replaceChildren(svg);
     const g = svgEl("g", { transform: `translate(${m.left},${m.top})` }, svg);
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < mcols; c++) {
         const v = spec.matrix[r][c];
-        const a = Math.pow(Math.min(1, Math.max(0, v)), 0.6);
-        const rect = svgEl("rect", { x: c * cell, y: r * cell, width: cell - 1, height: cell - 1,
-                                     style: `fill:color-mix(in srgb, var(--c-heat) ${(a * 100).toFixed(1)}%, var(--surface));${spec.onClick ? "cursor:pointer" : ""}` }, g);
-        if (r === c) svgEl("rect", { x: c * cell + 0.5, y: r * cell + 0.5, width: cell - 2, height: cell - 2, fill: "none", stroke: "var(--muted)", "stroke-width": 1, style: "pointer-events:none" }, g);
+        const a = spec.diverging ? Math.pow(Math.min(1, Math.abs(v)), 0.8) : Math.pow(Math.min(1, Math.max(0, v)), 0.6);
+        const hue = spec.diverging ? (v >= 0 ? "var(--c-fault)" : "var(--c-normal)") : "var(--c-heat)";
+        const rect = svgEl("rect", { x: c * cell, y: r * cell, width: Math.max(1, cell - (cell > 8 ? 1 : 0)), height: Math.max(1, cell - (cell > 8 ? 1 : 0)),
+                                     style: `fill:color-mix(in srgb, ${hue} ${(a * 100).toFixed(1)}%, var(--surface));${spec.onClick ? "cursor:pointer" : ""}` }, g);
+        if (r === c && spec.diagonal !== false) svgEl("rect", { x: c * cell + 0.5, y: r * cell + 0.5, width: cell - 2, height: cell - 2, fill: "none", stroke: "var(--muted)", "stroke-width": 1, style: "pointer-events:none" }, g);
         if (spec.tip) {
           rect.addEventListener("mousemove", evt => showTip(evt, spec.tip(r, c)));
           rect.addEventListener("mouseleave", hideTip);
         }
         if (spec.onClick) rect.addEventListener("click", () => spec.onClick(r, c));
-        if (cell >= 24 && v >= 0.1) {
+        if (cell >= 24 && v >= 0.1 && !spec.diverging) {
           const t = svgEl("text", { x: c * cell + cell / 2 - 0.5, y: r * cell + cell / 2 + 3.5, "text-anchor": "middle",
                                     style: `font-size:9.5px;fill:${a > 0.55 ? "var(--on-heat)" : "var(--text)"};pointer-events:none` }, g);
           t.textContent = Math.round(v * 100);
@@ -322,12 +324,15 @@ export function heatmap(el, spec) {
     if (spec.highlightRow != null) {
       svgEl("rect", { x: -1, y: spec.highlightRow * cell - 1, width: w + 1, height: cell + 1, fill: "none", stroke: "var(--c-amber)", "stroke-width": 2.5, rx: 2 }, g);
     }
+    const every = spec.labelEvery || 1;
     spec.rowLabels.forEach((lbl, r) => {
+      if (r % every !== 0 && r !== spec.highlightRow) return;
       const t = svgEl("text", { x: -6, y: r * cell + cell / 2 + 4, "text-anchor": "end",
                                 style: r === spec.highlightRow ? "fill:var(--text);font-weight:700" : null }, g);
       t.textContent = lbl;
     });
     spec.colLabels.forEach((lbl, c) => {
+      if (c % every !== 0) return;
       const t = svgEl("text", { x: c * cell + cell / 2, y: h + 14, "text-anchor": "middle" }, g);
       t.textContent = lbl;
     });

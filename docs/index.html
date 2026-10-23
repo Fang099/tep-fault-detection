@@ -144,6 +144,46 @@
     <div class="tiles" id="data-tiles" style="margin-top:14px"></div>
   </section>
 
+
+  <section class="section" id="explore" data-toc="Explore the data">
+    <h2>Explore the data</h2>
+    <p class="intro">Real readings from one simulation run of each fault type, next to a fault-free run, plus the checks and summaries
+      that shaped the modelling choices. Summaries use fault-free training runs only.</p>
+    <div id="explore-body">
+      <h3>Data quality</h3>
+      <div class="tiles" id="quality-tiles"></div>
+      <p class="note" id="quality-note" style="margin-top:8px"></p>
+
+      <h3>A fault, sensor by sensor</h3>
+      <p class="note" style="margin-top:0">Pick a fault. Its sensors are listed by how much the fault changes them: a shift in the average,
+        measured in standard deviations of normal operation (σ), or a change in how much the sensor fluctuates.</p>
+      <div class="split">
+        <div class="plot"><div id="legend-trace"></div><div id="chart-trace"></div></div>
+        <div class="panel">
+          <div class="control"><div class="control-head"><label for="trace-fault">Fault</label></div><select id="trace-fault"></select></div>
+          <div class="control"><div class="control-head"><label for="trace-sensor">Sensor</label></div><select id="trace-sensor"></select></div>
+          <div class="tiles" id="trace-tiles"></div>
+        </div>
+      </div>
+      <p class="callout" id="trace-callout"></p>
+
+      <h3>Which sensors move together</h3>
+      <p class="note" style="margin-top:0">Correlation between every pair of the 52 variables during normal operation: orange for
+        sensors that rise together, blue for sensors that move in opposite directions. Hover over a cell for the pair; click it to plot
+        those sensors above.</p>
+      <div class="split">
+        <div class="plot"><div id="chart-corr"></div></div>
+        <div class="panel" id="corr-panel"></div>
+      </div>
+
+      <h3>How many directions does normal operation really vary in?</h3>
+      <p class="note" style="margin-top:0">Principal component analysis on the 52 standardized readings: the share of normal variation each
+        component captures, and the running total.</p>
+      <div class="plot"><div id="legend-pca"></div><div id="chart-pca"></div></div>
+      <p class="callout" id="pca-callout"></p>
+    </div>
+  </section>
+
   <section class="section" id="labels" data-toc="Labels">
     <h2>Labels: when is a row "faulty"?</h2>
     <p class="intro">A faulty run starts out normal; the fault is switched on partway through. Rows before that moment are labelled

@@ -90,8 +90,8 @@ function renderOverall() {
   const recall = state.file.val.recall;
   const good = recall.filter(r => r >= 0.8).length, poor = recall.filter(r => r < 0.2).length;
   $("tiles").innerHTML = [
-    tile("Macro-F1", num(m.val.macro_F1, 3), `baseline ${num(base.val.macro_F1, 3)}`, "big"),
-    tile("Accuracy", pct(m.val.accuracy), `baseline ${pct(base.val.accuracy)}`, "big"),
+    tile("Macro-F1", num(m.val.macro_F1, 3), m.ci ? `95% interval ${num(m.ci.macro_F1[0], 3)} to ${num(m.ci.macro_F1[1], 3)}` : `baseline ${num(base.val.macro_F1, 3)}`, "big"),
+    tile("Accuracy", pct(m.val.accuracy), m.ci ? `95% interval ${pct(m.ci.accuracy[0])} to ${pct(m.ci.accuracy[1])}` : `baseline ${pct(base.val.accuracy)}`, "big"),
     tile("Faults with recall of 80% or more", `${good} / 20`),
     tile("Faults with recall under 20%", `${poor} / 20`),
     tile("Rows evaluated", int(rows)),

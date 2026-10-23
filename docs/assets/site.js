@@ -93,13 +93,15 @@ export function getJSON(path) {
   return cache.get(path);
 }
 // Manifests written before tree models existed have no family information; fill it in so every page can rely on it.
-const FAMILY_LABELS = { baseline: "Majority baseline", logreg: "Logistic regression", tree: "Decision tree",
-  rf: "Random forest", gb: "Gradient boosting", ada: "AdaBoost", xgb: "XGBoost" };
+const FAMILY_LABELS = { baseline: "Majority baseline", logreg: "Logistic regression", pcalr: "PCA + logistic regression",
+  pcamon: "PCA monitoring (T² / SPE)", tree: "Decision tree", rf: "Random forest", gb: "Gradient boosting", ada: "AdaBoost", xgb: "XGBoost" };
 function normalizeManifest(m) {
   for (const task of ["detection", "diagnosis"]) {
     for (const s of m[task].models) {
       if (!s.family) s.family = s.penalty === "baseline" ? "baseline" : "logreg";
       if (!s.params) s.params = {};
+      if (!s.features) s.features = "inst";
+      if (!s.score_kind) s.score_kind = "prob";
     }
     m[task].best_by_family ||= {};
   }
@@ -200,9 +202,25 @@ export function dataNote(manifest) {
     evaluated on ${int(manifest.dataset.val_runs)} held-out runs (${subset}).`;
 }
 
+// ---------- Model inputs ----------
+// Inputs are the 52 readings, plus (for history models) a trailing mean and standard deviation of each, named
+// like "xmeas_9_mean10". inputInfo turns a name into a readable description.
+export function inputInfo(name) {
+  const m = /^(xm(?:eas|v)_\d+)(?:_(mean|std)(\d+))?$/.exec(name);
+  if (!m) return { code: name, desc: name };
+  const base = VARIABLES[m[1]] || m[1];
+  if (!m[2]) return { code: name, desc: base };
+  const minutes = +m[3] * 3;
+  return { code: name, desc: `${base} (${minutes}-min ${m[2] === "mean" ? "mean" : "std. dev."})`, history: true };
+}
+// Lower-case a model name for use mid-sentence, but keep names like XGBoost, AdaBoost and PCA as they are.
+export const lowerLabel = l => (/[A-Z]/.test(l.slice(1)) ? l : l.charAt(0).toLowerCase() + l.slice(1));
+export const INPUT_SETS = { inst: "Instantaneous", hist: "With 30-min history" };
+
 // ---------- Models ----------
-// A selection is { family, ...settings }. Logistic regression uses { penalty, weighting, C }; tree-based families
-// use the parameters listed for them in the manifest (e.g. { depth, trees } or { depth, rounds }).
+// A selection is { family, features, ...settings }. Logistic regression uses { penalty, weighting, C }; other
+// families use the parameters listed for them in the manifest (e.g. { depth, trees } or { stat, k }).
+// features is "inst" (52 readings) or "hist" (readings plus 30-minute history).
 const sameC = (a, b) => (a == null && b == null) || (a != null && b != null && Math.abs(Math.log10(a) - Math.log10(b)) < 1e-6);
 export const familyOf = m => m.family || (m.penalty === "baseline" ? "baseline" : "logreg");
 export const familyInfo = (manifest, key) => manifest.families.find(f => f.key === key) || { key, label: FAMILY_LABELS[key] || key, params: [] };
@@ -213,6 +231,7 @@ export function findModel(manifest, task, sel) {
     const fam = familyOf(m);
     if (fam !== sel.family) return false;
     if (fam === "baseline") return true;
+    if ((m.features || "inst") !== (sel.features || "inst")) return false;
     if (fam === "logreg") {
       if (m.penalty !== sel.penalty) return false;
       if (task === "detection" && m.class_weight !== sel.weighting) return false;
@@ -224,8 +243,9 @@ export function findModel(manifest, task, sel) {
 export function selectionOf(model) {
   const fam = familyOf(model);
   if (fam === "baseline") return { family: "baseline" };
-  if (fam === "logreg") return { family: "logreg", penalty: model.penalty, weighting: model.class_weight || "none", C: model.C };
-  return { family: fam, ...model.params };
+  const features = model.features || "inst";
+  if (fam === "logreg") return { family: "logreg", features, penalty: model.penalty, weighting: model.class_weight || "none", C: model.C };
+  return { family: fam, features, ...model.params };
 }
 export function bestModel(manifest, task, family) {
   const id = family ? manifest[task].best_by_family[family] : manifest[task].best;
@@ -239,16 +259,19 @@ export function readSelection(manifest, task) {
   const q = new URLSearchParams(location.search);
   let sel;
   const fam = q.get("family") || (q.get("penalty") === "baseline" ? "baseline" : q.get("penalty") ? "logreg" : null);
+  const features = q.get("hist") === "1" ? "hist" : "inst";
   if (fam === "baseline") sel = { family: "baseline" };
   else if (fam === "logreg") {
     const penalty = q.get("penalty") || "none";
-    sel = { family: "logreg", penalty, weighting: q.get("w") || "none", C: penalty === "none" ? null : +(q.get("C") || 1) };
+    sel = { family: "logreg", features, penalty, weighting: q.get("w") || "none", C: penalty === "none" ? null : +(q.get("C") || 1) };
   } else if (fam) {
     const params = familyInfo(manifest, fam).params;
     const best = bestModel(manifest, task, fam);
     // No settings in the link: open the family's best model; partial settings: fill the rest from it.
     sel = best ? selectionOf(best) : { family: fam };
-    for (const p of params) if (q.has(p.key)) sel[p.key] = +q.get(p.key);
+    const given = params.some(p => q.has(p.key)) || q.has("hist");
+    if (given) sel.features = features;
+    for (const p of params) if (q.has(p.key)) sel[p.key] = p.type === "choice" ? q.get(p.key) : +q.get(p.key);
   }
   return sel && findModel(manifest, task, sel) ? sel : selectionOf(bestModel(manifest, task));
 }
@@ -258,10 +281,11 @@ function selectionParams(sel) {
     q.set("penalty", sel.penalty);
     if (sel.weighting && sel.weighting !== "none") q.set("w", sel.weighting);
     if (sel.C != null && sel.penalty !== "none") q.set("C", sel.C);
-    return q;
+  } else {
+    q.set("family", sel.family);
+    for (const [k, v] of Object.entries(sel)) if (!["family", "features"].includes(k) && v != null) q.set(k, v);
   }
-  q.set("family", sel.family);
-  for (const [k, v] of Object.entries(sel)) if (k !== "family" && v != null) q.set(k, v);
+  if (sel.features === "hist") q.set("hist", "1");
   return q;
 }
 export function writeSelection(sel, extra = {}) {
@@ -276,12 +300,14 @@ export function modelLink(page, model) {
 export function settingsText(model) {
   const fam = familyOf(model), p = model.params || {};
   if (fam === "baseline") return "–";
+  const hist = model.features === "hist" ? "30-min history" : null;
   if (fam === "logreg") {
     const pen = { none: "no penalty", l1: "lasso", l2: "ridge" }[model.penalty];
-    return [pen, model.class_weight === "balanced" ? "balanced" : null, model.C != null ? `C = ${fmtC(model.C)}` : null].filter(Boolean).join(", ");
+    return [pen, model.class_weight === "balanced" ? "balanced" : null, model.C != null ? `C = ${fmtC(model.C)}` : null, hist].filter(Boolean).join(", ");
   }
-  return [p.depth != null ? `depth ${p.depth}` : null, p.trees != null ? `${p.trees} trees` : null,
-          p.rounds != null ? `${p.rounds} rounds` : null].filter(Boolean).join(", ");
+  return [p.stat ? (p.stat === "T2" ? "T²" : "SPE") : null, p.k != null ? `${p.k} components` : null,
+          p.depth != null ? `depth ${p.depth}` : null, p.trees != null ? `${p.trees} trees` : null,
+          p.rounds != null ? `${p.rounds} rounds` : null, hist].filter(Boolean).join(", ");
 }
 
 // ---------- Model selector (sticky bar) ----------
@@ -290,7 +316,8 @@ export function settingsText(model) {
 export function modelBar(container, opts) {
   const { task, manifest } = opts;
   const grid = manifest.settings.C_grid;
-  const families = manifest.families.filter(f => manifest[task].models.some(m => familyOf(m) === f.key));
+  const families = manifest.families.filter(f => (!f.tasks || f.tasks.includes(task)) && manifest[task].models.some(m => familyOf(m) === f.key));
+  const hasHistory = fam => manifest[task].models.some(m => familyOf(m) === fam && m.features === "hist");
   let sel = { ...opts.selection };
   // Settings to return to when switching back to a family: start each family at its best model.
   const last = new Map(families.map(f => [f.key, selectionOf(bestModel(manifest, task, f.key) || manifest[task].models.find(m => familyOf(m) === f.key))]));
@@ -311,6 +338,12 @@ export function modelBar(container, opts) {
 
   function renderControls() {
     const fam = sel.family;
+    const inputs = fam !== "baseline" && hasHistory(fam) ? `<div class="control"><div class="control-head">Inputs</div>
+      <div class="seg" data-k="features"><button type="button" data-v="inst">Instantaneous</button><button type="button" data-v="hist">+ 30-min history</button></div></div>` : "";
+    renderFamilyControls(fam);
+    controls.insertAdjacentHTML("afterbegin", inputs);
+  }
+  function renderFamilyControls(fam) {
     if (fam === "baseline") {
       controls.innerHTML = `<p class="baseline-note">Predicts the most common class for every row. It has no settings and ignores the sensors entirely.</p>`;
     } else if (fam === "logreg") {
@@ -323,8 +356,10 @@ export function modelBar(container, opts) {
           <input type="range" min="0" max="${grid.length - 1}" step="1" data-k="C" aria-label="Regularization strength C">
           <div class="ticks">${grid.map(c => `<span>${fmtC(c)}</span>`).join("")}</div></div>`;
     } else {
-      controls.innerHTML = familyInfo(manifest, fam).params.map(p => `
-        <div class="control grow"><div class="control-head"><span>${esc(p.label)}</span><span class="val" data-val="${p.key}"></span></div>
+      controls.innerHTML = familyInfo(manifest, fam).params.map(p => p.type === "choice"
+        ? `<div class="control"><div class="control-head">${esc(p.label)}</div>
+            <div class="seg" data-k="${p.key}">${p.values.map(v => `<button type="button" data-v="${v}">${v === "T2" ? "Hotelling T²" : esc(v)}</button>`).join("")}</div></div>`
+        : `<div class="control grow"><div class="control-head"><span>${esc(p.label)}</span><span class="val" data-val="${p.key}"></span></div>
           <input type="range" min="0" max="${p.values.length - 1}" step="1" data-param="${p.key}" aria-label="${esc(p.label)}">
           <div class="ticks">${p.values.map(v => `<span>${v}</span>`).join("")}</div></div>`).join("");
     }
@@ -333,6 +368,13 @@ export function modelBar(container, opts) {
   function sync() {
     const model = findModel(manifest, task, sel);
     q("family").value = sel.family;
+    // Inputs switch: disable an option when no model with these settings was trained on it.
+    q("features")?.querySelectorAll("button").forEach(b => {
+      b.classList.toggle("on", b.dataset.v === (sel.features || "inst"));
+      b.setAttribute("aria-pressed", b.dataset.v === (sel.features || "inst"));
+      b.disabled = b.dataset.v !== (sel.features || "inst") && !findModel(manifest, task, { ...sel, features: b.dataset.v });
+      b.title = b.disabled ? "Not trained with these settings" : "";
+    });
     if (sel.family === "logreg") {
       for (const k of ["weighting", "penalty"]) {
         q(k)?.querySelectorAll("button").forEach(b => {
@@ -347,6 +389,10 @@ export function modelBar(container, opts) {
       q("cval").textContent = usesC ? `C = ${fmtC(sel.C)}` : "no penalty";
     } else if (sel.family !== "baseline") {
       for (const p of familyInfo(manifest, sel.family).params) {
+        if (p.type === "choice") {
+          controls.querySelectorAll(`[data-k="${p.key}"] button`).forEach(b => b.classList.toggle("on", b.dataset.v === sel[p.key]));
+          continue;
+        }
         controls.querySelector(`[data-param="${p.key}"]`).value = Math.max(0, p.values.indexOf(sel[p.key]));
         controls.querySelector(`[data-val="${p.key}"]`).textContent = sel[p.key];
       }
@@ -354,14 +400,19 @@ export function modelBar(container, opts) {
     q("label").textContent = model ? model.label : "not trained";
     const badges = [];
     if (model && model.id === manifest[task].best) badges.push(`<span class="badge best">best overall</span>`);
-    else if (model && model.id === manifest[task].best_by_family[sel.family]) badges.push(`<span class="badge best">best ${esc(familyLabel(manifest, sel.family).toLowerCase())}</span>`);
-    if (model && model.coef_nonzero != null) badges.push(`<span class="badge">${model.coef_nonzero} of 52 sensors used</span>`);
+    else if (model && model.id === manifest[task].best_by_family[sel.family]) badges.push(`<span class="badge best">best ${esc(lowerLabel(familyLabel(manifest, sel.family)))}</span>`);
+    if (model && model.coef_nonzero != null) {
+      const n = model.n_inputs || 52;
+      badges.push(`<span class="badge">${model.coef_nonzero} of ${n} ${n > 52 ? "inputs" : "sensors"} used</span>`);
+    }
     q("badges").innerHTML = badges.join(" ");
     q("best-family").hidden = sel.family === "baseline";
     return model;
   }
   function changed(rebuild = false) {
     if (rebuild) renderControls();
+    // A setting that only exists without history (e.g. lasso) switches the inputs back to instantaneous.
+    if (sel.features === "hist" && !findModel(manifest, task, sel) && findModel(manifest, task, { ...sel, features: "inst" })) sel.features = "inst";
     last.set(sel.family, { ...sel });
     const model = sync();
     if (model) opts.onChange(sel, model);
@@ -458,4 +509,50 @@ export const PROB_TICKS = [0.0001, 0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999, 0.99
 // Tile HTML helper.
 export function tile(label, value, sub = "", cls = "") {
   return `<div class="tile ${cls}"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+}
+
+// ---------- Metrics at any false-alarm rate ----------
+// The official comparison uses 5% false alarms with the exact numbers from the summary. Other rates are read from the
+// binned validation scores; the bin edges include the exact thresholds for the listed rates, so these are exact too.
+export const OFFICIAL_FAR = 0.05;
+export function metricsAtFar(model, file, far) {
+  if (model.penalty === "baseline" || familyOf(model) === "baseline")
+    return { recall: 0, far: 0, precision: null, F1: 0, perFault: null, threshold: null };
+  const official = Math.abs(far - OFFICIAL_FAR) < 1e-9 && model.val.recall != null;
+  const summary = official ? { recall: model.val.recall, far: 1 - model.val.normal_recall, precision: model.val.precision, F1: model.val.F1,
+                               threshold: model.val.threshold, ci: model.ci || null } : null;
+  if (!file) return summary;
+  const v = detectionView(file.val);
+  const t = official ? v.indexForThreshold(model.val.threshold) : v.indexForFar(far), r = v.at(t);
+  const fromBins = { recall: r.recall, far: r.far, precision: r.TP + r.FP ? r.precision : null, F1: r.f1, threshold: r.threshold };
+  return { ...fromBins, ...(summary || {}), perFault: v.perFault(t), view: v, t };
+}
+
+// Every detection model file, loaded once and cached (used when ranking at a rate other than 5%).
+let allDetCache = null;
+export function loadAllDetection(manifest, onProgress) {
+  if (!allDetCache) {
+    const models = manifest.detection.models.filter(m => familyOf(m) !== "baseline");
+    let done = 0;
+    allDetCache = Promise.all(models.map(m => loadModel("detection", m.id).then(f => { onProgress?.(++done, models.length); return [m.id, f]; })))
+      .then(pairs => Object.fromEntries(pairs));
+  }
+  return allDetCache;
+}
+
+// Nearest delay level available in a file for a requested rate.
+export function nearestDelayLevel(delays, far) {
+  const keys = Object.keys(delays);
+  return keys.reduce((a, b) => (Math.abs(+b - far) < Math.abs(+a - far) ? b : a));
+}
+
+// False-alarm rate selector (buttons). The official rate is marked.
+export function farControl(el, levels, value, onChange) {
+  el.innerHTML = `<div class="seg" role="group" aria-label="False alarm rate">${levels.map(l =>
+    `<button type="button" data-v="${l}" class="${Math.abs(l - value) < 1e-9 ? "on" : ""}">${+(100 * l).toFixed(1)}%${Math.abs(l - OFFICIAL_FAR) < 1e-9 ? " ★" : ""}</button>`).join("")}</div>`;
+  el.onclick = e => {
+    const b = e.target.closest("button[data-v]"); if (!b) return;
+    el.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    onChange(+b.dataset.v);
+  };
 }

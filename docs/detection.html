@@ -62,6 +62,19 @@
         <p class="note" id="worked-note"></p>
       </div>
     </details>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>How sure are these numbers?</summary>
+      <div class="learn-body">
+        <p>The validation set holds only a limited number of runs per fault type, so every metric would come out a little different with
+          other runs. To measure that, the pipeline repeats the evaluation on 200 resampled versions of the validation set
+          (a <b>bootstrap</b>): each time it draws whole runs at random, with replacement, keeping the same number of runs per fault type.
+          Whole runs are drawn, not single rows, because rows within a run are strongly correlated; resampling rows would pretend there is
+          far more independent evidence than there is.</p>
+        <p>The 95% interval is the range covered by the middle 95% of those 200 results. Intervals are computed at each model's
+          5% false-alarm threshold, so they appear in the tiles only at that setting.</p>
+        <div id="ci-live"></div>
+      </div>
+    </details>
   </section>
 
   <section class="section" id="scores" data-toc="Why errors happen">
@@ -106,6 +119,44 @@
     </details>
   </section>
 
+
+  <section class="section" id="cost" data-toc="Threshold by cost">
+    <h2>Choosing the threshold by cost</h2>
+    <p class="intro">A false alarm costs an operator's time and trust; a missed fault can damage equipment, spoil product or create a
+      safety risk. If you can say how much worse a miss is than a false alarm, the threshold that minimizes the expected cost follows.</p>
+    <div class="split">
+      <div class="plot"><div id="legend-cost"></div><div id="chart-cost"></div></div>
+      <div class="panel">
+        <div class="control">
+          <div class="control-head"><span>One missed fault costs as much as</span><span class="val" id="cost-ratio-val"></span></div>
+          <input type="range" id="cost-ratio" min="0" max="9" step="1" value="3" aria-label="Cost of a missed fault, in false alarms">
+          <div class="ticks"><span>1</span><span>10</span><span>100</span><span>1000</span></div>
+        </div>
+        <div class="control">
+          <div class="control-head"><span>Share of time a fault is present</span><span class="val" id="cost-prev-val"></span></div>
+          <input type="range" id="cost-prev" min="0" max="7" step="1" value="3" aria-label="Share of time a fault is present">
+          <div class="ticks"><span>0.1%</span><span>2%</span><span>50%</span></div>
+        </div>
+        <div class="tiles" id="tiles-cost"></div>
+        <button class="btn" type="button" id="cost-apply" style="margin-top:12px">Use this threshold above</button>
+      </div>
+    </div>
+    <p class="callout" id="callout-cost"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Expected cost, and why the share of faulty time matters</summary>
+      <div class="learn-body">
+        <p>For a threshold <i>t</i>, a fraction FAR(<i>t</i>) of normal samples raise a false alarm and a fraction 1 − recall(<i>t</i>) of faulty
+          samples are missed. If a fault is present a share <i>π</i> of the time, and a miss costs <i>r</i> false alarms, the expected cost per
+          sample is:</p>
+        <div class="formula" id="f-cost"></div>
+        <p>The chart divides this by the cost of having no alarms at all (<i>π r</i>, every fault missed), so 100% means monitoring is no
+          better than nothing and lower is better. The share <i>π</i> matters a lot: in the validation data 91% of samples are faulty because
+          of how the simulations were set up, but a real plant runs normally almost all the time. With a small <i>π</i>, false alarms
+          dominate and the best threshold moves up; with a large one, misses dominate and it moves down.</p>
+      </div>
+    </details>
+  </section>
+
   <section class="section" id="faults" data-toc="Fault by fault">
     <h2>Fault by fault</h2>
     <p class="intro">Share of each fault's rows caught at the current threshold. Some faults barely change the measurements and are
@@ -116,10 +167,61 @@
     </div>
   </section>
 
+
+  <section class="section" id="run" data-toc="Follow a single run">
+    <h2>Follow a single run</h2>
+    <p class="intro">Pick a fault and watch the model's score, sample by sample, on one validation run of 25 hours. So that every model
+      shares one scale, each score is shown by how unusual it is for normal operation: "1 in 20" means only 1 in 20 normal samples score
+      that high. Dots above the threshold line are alarms; the threshold follows the slider at the top of the page.</p>
+    <div class="control"><div class="control-head"><label for="run-fault">Run</label></div><select id="run-fault"></select></div>
+    <div class="plot"><div id="legend-run"></div><div id="chart-run"></div></div>
+    <div class="tiles" id="tiles-run" style="margin-top:12px"></div>
+    <p class="callout" id="callout-run"></p>
+  </section>
+
   <section class="section" id="sensors" data-toc="Which sensors matter">
     <h2>Which sensors the model relies on</h2>
     <p class="intro" id="sensors-intro"></p>
     <div class="plot"><div class="plot-title" id="sensors-title"></div><div id="chart-sensors"></div></div>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>What the 30-minute history inputs add</summary>
+      <div class="learn-body">
+        <p>A single 3-minute snapshot can't show a slow drift or a sensor that has started to fluctuate more. History inputs give the
+          model the last <i>W</i> = 10 samples (30 minutes) of each reading, summarized as a mean and a standard deviation:</p>
+        <div class="formula" id="f-history"></div>
+        <p>Only samples up to the current time <i>t</i> are used, and only from the same run, so a prediction never uses information
+          that wouldn't be available at that moment. The mean smooths out noise; the standard deviation reacts when a sensor becomes
+          more variable, which is how the "random variation" faults (8 to 12) show themselves. The price: right after a fault starts,
+          the window still holds mostly pre-fault samples, so the very first minutes can be slower to catch.</p>
+        <div id="history-live"></div>
+      </div>
+    </details>
+  </section>
+
+
+  <section class="section" id="calibration" data-toc="Trusting the scores">
+    <h2>Can the scores be read as probabilities?</h2>
+    <p class="intro">A model is calibrated if its scores mean what they say: of all the samples it scores around 0.8, about 80% really are
+      faulty. Each dot groups the validation samples with similar scores; on the diagonal, the score matches the true share of faults.</p>
+    <div class="split">
+      <div class="plot"><div id="legend-calib"></div><div id="chart-calib"></div></div>
+      <div class="panel"><div class="tiles" id="tiles-calib"></div><p class="note" id="calib-note" style="margin:12px 0 0"></p></div>
+    </div>
+    <p class="callout" id="callout-calib"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Measuring calibration: Brier score and ECE</summary>
+      <div class="learn-body">
+        <p>The <b>Brier score</b> is the mean squared difference between the score <i>p<sub>i</sub></i> and what happened (<i>y<sub>i</sub></i> = 1
+          for a faulty sample, 0 for a normal one). Lower is better. The <b>expected calibration error</b> (ECE) averages the gap between each
+          bin's mean score and its true share of faults, weighted by how many samples fall in the bin:</p>
+        <div class="formula" id="f-calib"></div>
+        <p>Calibration and ranking are different things. Every alarm on this site is set by a threshold, which only depends on the order of the
+          scores, so a badly calibrated model can still detect faults well. Calibration matters when a score is read as a probability, for
+          example when an operator is told "82% chance of a fault". Two common causes of miscalibration here: balanced class weighting pushes
+          scores toward the middle on purpose, and trees and forests give coarse, overconfident scores. These numbers are also tied to the
+          validation set's 91% share of faulty samples; with a different share the same scores would be calibrated differently.</p>
+      </div>
+    </details>
   </section>
 
   <section class="section" id="speed" data-toc="How quickly">
@@ -131,10 +233,11 @@
       <div class="plot"><div id="chart-speed"></div></div>
       <div class="panel">
         <div class="control"><div class="control-head">False alarm rate</div>
-          <div class="seg" id="speed-far"><button type="button" data-far="0.01">1%</button><button type="button" data-far="0.05" class="on">5%</button><button type="button" data-far="0.1">10%</button></div></div>
+          <div class="seg" id="speed-far"></div></div>
         <div class="tiles" id="tiles-speed"></div>
       </div>
     </div>
+    <p class="callout" id="callout-speed"></p>
     <details class="learn">
       <summary><span class="learn-tag">Learn</span>Why a long delay can be a chance alarm</summary>
       <div class="learn-body">

@@ -1,6 +1,7 @@
 import {
   renderChrome, showError, loadManifest, loadModel, loadTestModel, bestModel, dataNote, detectionView, findModel as findAny,
   familyOf, familyLabel, modelLink, COLORS, pct, num, int, tile, esc,
+  metricsAtFar, loadAllDetection, farControl, OFFICIAL_FAR,
 } from "../site.js";
 import { barChart, legend } from "../charts.js";
 
@@ -13,6 +14,8 @@ main().catch(showError);
 async function main() {
   const manifest = await loadManifest();
   $("data-note").innerHTML = dataNote(manifest);
+  const levels = manifest.settings?.far_levels || [0.01, 0.02, 0.05, 0.1, 0.2];
+  farControl($("fam-far"), levels, fam.far, far => { fam.far = far; renderFamilies(manifest); });
   renderFamilies(manifest);
   renderFindings(manifest);
   await renderTest(manifest);
@@ -20,7 +23,8 @@ async function main() {
 
 // ---------- Findings (computed from the manifest so they stay true when results change) ----------
 function renderFindings(manifest) {
-  const det = manifest.detection.models, dia = manifest.diagnosis.models;
+  const inst = m => (m.features || "inst") === "inst";
+  const det = manifest.detection.models.filter(inst), dia = manifest.diagnosis.models.filter(inst);
   const best = bestModel(manifest, "detection"), bestD = bestModel(manifest, "diagnosis");
   const lrDet = bestModel(manifest, "detection", "logreg"), lrDia = bestModel(manifest, "diagnosis", "logreg");
   const base = det.find(m => m.penalty === "baseline");
@@ -59,6 +63,19 @@ function renderFindings(manifest) {
     `<b>Diagnosis is far above chance but uneven.</b> The best diagnosis model (${esc(bestD.label)}) reaches macro-F1
      ${num(bestD.val.macro_F1, 3)} against ${num(dia.find(m => m.penalty === "baseline").val.macro_F1, 3)} for the baseline;
      some faults are named almost perfectly while others are barely above chance. See <a href="diagnosis.html">Diagnosis</a>.`,
+    (() => {
+      const all = manifest.detection.models, h = all.filter(m => m.features === "hist");
+      if (!h.length) return "";
+      const bi = all.filter(inst).reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
+      const bh = h.reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
+      const d = bh.val.recall - bi.val.recall;
+      return d > 0.005
+        ? `<b>Thirty minutes of history helps.</b> Adding rolling means and standard deviations lifts the best detection model from
+           ${pct(bi.val.recall)} (${esc(bi.label)}) to ${pct(bh.val.recall)} (${esc(bh.label)}) at 5% false alarms: drifts and changes in
+           variability that a single snapshot can't show become visible. See <a href="detection.html#sensors">Detection</a>.`
+        : `<b>History inputs don't help detection here.</b> The best model with 30-minute rolling statistics reaches ${pct(bh.val.recall)}
+           against ${pct(bi.val.recall)} from single snapshots.`;
+    })(),
     `<b>Detection speed varies enormously by fault:</b> from minutes for sudden faults to many hours, or never, for subtle ones.
      See <a href="detection.html#speed">Detection</a>.`,
   ];
@@ -66,26 +83,50 @@ function renderFindings(manifest) {
 }
 
 // ---------- Best model of each family ----------
+const fam = { far: OFFICIAL_FAR, all: null };
+const ciCell = (ci, fmt) => (ci && ci[1] > ci[0] ? `<div class="note">${fmt(ci[0])} – ${fmt(ci[1])}</div>` : "");
+
 function renderFamilies(manifest) {
+  const official = Math.abs(fam.far - OFFICIAL_FAR) < 1e-9, farTxt = `${+(100 * fam.far).toFixed(1)}%`;
+  if (!official && !fam.all) {
+    $("fam-status").textContent = "Loading every model's scores…";
+    loadAllDetection(manifest, (k, n) => { $("fam-status").textContent = `Loading every model's scores… ${k} of ${n}`; })
+      .then(all => { fam.all = all; $("fam-status").textContent = ""; renderFamilies(manifest); }).catch(showError);
+    return;
+  }
+  // Detection: at 5% use the selection stored in the manifest; at other rates re-rank every model of the family.
+  const recallOf = m => (official ? m.val.recall : metricsAtFar(m, fam.all[m.id], fam.far).recall);
+  const bestDetAt = key => {
+    if (official) return bestModel(manifest, "detection", key);
+    const ms = manifest.detection.models.filter(m => familyOf(m) === key);
+    return ms.length ? ms.reduce((a, b) => (recallOf(b) > recallOf(a) ? b : a)) : null;
+  };
   const fams = manifest.families.filter(f => f.key !== "baseline");
-  const rows = fams.map(f => ({ f, det: bestModel(manifest, "detection", f.key), dia: bestModel(manifest, "diagnosis", f.key) }));
-  $("families-table").innerHTML = `<thead><tr><th>Model</th><th>Best detection settings</th><th class="n">Caught at 5% false alarms</th>
+  const rows = fams.map(f => ({ f, det: bestDetAt(f.key), dia: bestModel(manifest, "diagnosis", f.key) }));
+  rows.forEach(r => { r.rec = r.det ? recallOf(r.det) : null; });
+  const top = rows.reduce((a, b) => ((b.rec ?? -1) > (a.rec ?? -1) ? b : a));
+  const official5 = rows.reduce((a, b) => ((b.det?.val.recall ?? -1) > (a.det?.val.recall ?? -1) ? b : a));
+  $("fam-status").innerHTML = official
+    ? "Detection ranked at the official 5% false alarm rate." + (rows.some(r => r.det?.ci) ? " Small grey ranges are 95% bootstrap intervals over validation runs." : "")
+    : `Detection re-ranked at ${farTxt} false alarms: within each family the best settings are picked again at this rate. ${
+        top.f.key === official5.f.key ? `<b>${esc(top.f.label)} stays on top.</b>` : `<b>${esc(top.f.label)} moves ahead of ${esc(official5.f.label)}</b>, which leads at 5%.`}`;
+  $("families-table").innerHTML = `<thead><tr><th>Model</th><th>Best detection settings</th><th class="n">Caught at ${farTxt} false alarms</th>
       <th class="n">ROC-AUC</th><th>Best diagnosis settings</th><th class="n">Macro-F1</th></tr></thead><tbody>${
     rows.map(({ f, det, dia }) => `<tr class="${det?.id === manifest.detection.best || dia?.id === manifest.diagnosis.best ? "highlight" : ""}">
       <td><b>${esc(f.label)}</b></td>
       <td>${det ? `<a href="${modelLink("detection.html", det)}">${esc(det.label)}</a>` : "–"}</td>
-      <td class="n">${det ? pct(det.val.recall) : "–"}</td><td class="n">${det ? num(det.val.ROC_AUC, 3) : "–"}</td>
+      <td class="n">${det ? pct(recallOf(det)) + (official ? ciCell(det.ci?.recall, x => pct(x)) : "") : "–"}</td><td class="n">${det ? num(det.val.ROC_AUC, 3) : "–"}</td>
       <td>${dia ? `<a href="${modelLink("diagnosis.html", dia)}">${esc(dia.label)}</a>` : "–"}</td>
-      <td class="n">${dia ? num(dia.val.macro_F1, 3) : "–"}</td></tr>`).join("")}</tbody>`;
-  legend($("legend-families"), [{ label: "Detection: faults caught at 5% false alarms", color: COLORS.fault },
+      <td class="n">${dia ? num(dia.val.macro_F1, 3) + ciCell(dia.ci?.macro_F1, x => num(x, 3)) : "–"}</td></tr>`).join("")}</tbody>`;
+  legend($("legend-families"), [{ label: `Detection: faults caught at ${farTxt} false alarms`, color: COLORS.fault },
                                 { label: "Diagnosis: macro-F1", color: COLORS.data }]);
   barChart($("chart-families"), {
     categories: rows.map(r => r.f.label),
-    series: [{ name: "det", color: COLORS.fault, values: rows.map(r => r.det?.val.recall ?? null) },
+    series: [{ name: "det", color: COLORS.fault, values: rows.map(r => r.rec) },
              { name: "dia", color: COLORS.data, values: rows.map(r => r.dia?.val.macro_F1 ?? null) }],
     x: { domain: [0, 1], fmt: x => num(x, 1), label: "Validation score (higher is better)" },
     labelWidth: 150, valueFmt: (x, k, s) => (s.name === "det" ? pct(x) : num(x, 3)),
-    tip: k => `<b>${esc(rows[k].f.label)}</b><br>Detection: ${rows[k].det ? pct(rows[k].det.val.recall) : "–"}<br>Diagnosis: ${rows[k].dia ? num(rows[k].dia.val.macro_F1, 3) : "–"}`,
+    tip: k => `<b>${esc(rows[k].f.label)}</b><br>Detection: ${rows[k].det ? pct(rows[k].rec) : "–"}<br>Diagnosis: ${rows[k].dia ? num(rows[k].dia.val.macro_F1, 3) : "–"}`,
   });
 }
 

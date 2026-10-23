@@ -16,7 +16,7 @@
 <header class="page-head"><div class="inner">
   <h1>Model A against model B</h1>
   <p class="lede">Pick any two models and compare them on the same validation runs. Detection models are compared at the threshold
-    that gives each one 5% false alarms, so neither gets an unfair advantage from a looser alarm setting.</p>
+    that gives each one the same false alarm rate (officially 5%, adjustable below), so neither gets an unfair advantage from a looser alarm setting.</p>
 </div></header>
 
 <div class="layout">
@@ -29,6 +29,7 @@
     <div class="control grow"><div class="control-head"><label for="pick-a"><span class="badge a">A</span> Model A</label></div><select id="pick-a"></select></div>
     <div class="control grow"><div class="control-head"><label for="pick-b"><span class="badge b">B</span> Model B</label></div><select id="pick-b"></select></div>
     <div class="control"><button class="btn" type="button" id="swap">Swap A and B</button></div>
+    <div class="control" id="far-wrap"><div class="control-head">False alarm rate (★ = official)</div><div id="far"></div></div>
   </div>
 
   <section class="section" id="head" data-toc="Head to head">
@@ -55,6 +56,15 @@
     <div class="plot"><div id="legend-faults"></div><div id="chart-faults"></div></div>
   </section>
 
+  <section class="section" id="roc" data-toc="Every false alarm rate">
+    <h2>At every false alarm rate</h2>
+    <p class="intro">Each curve traces one model as its threshold slides from strict to loose: further up and to the left is better.
+      The dots mark each model at the chosen rate; click on a curve to jump to the nearest listed rate.</p>
+    <div class="control" style="margin-bottom:10px"><div class="seg" id="roc-zoom"><button type="button" data-v="full" class="on">Whole curve</button><button type="button" data-v="zoom">Zoom to 0–20% false alarms</button></div></div>
+    <div class="plot"><div id="legend-roc"></div><div id="chart-roc"></div></div>
+    <p class="callout" id="roc-callout"></p>
+  </section>
+
   <section class="section" id="speed" data-toc="How quickly">
     <h2>How quickly</h2>
     <p class="intro" id="speed-intro"></p>
@@ -63,7 +73,7 @@
 
   <section class="section" id="table" data-toc="Every model">
     <h2>Every model</h2>
-    <p class="intro">All trained models for this task, ranked on validation. Click a column to sort, or use the buttons to load a model as A or B.</p>
+    <p class="intro" id="table-intro"></p>
     <div class="table-wrap"><table id="all-table"></table></div>
   </section>
 </main>

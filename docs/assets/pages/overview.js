@@ -1,4 +1,5 @@
-import { renderChrome, showError, loadManifest, bestModel, VARIABLES, FAULTS, COLORS, pct, num, int, tile, esc } from "../site.js";
+import { renderChrome, showError, loadManifest, getJSON, bestModel, VARIABLES, FAULTS, COLORS, pct, num, int, tile, esc } from "../site.js";
+import { lineChart, heatmap, legend } from "../charts.js";
 
 renderChrome();
 const $ = id => document.getElementById(id);
@@ -102,3 +103,150 @@ loadManifest().then(manifest => {
 }).catch(showError);
 
 function ordinal(k) { return k === 1 ? "" : k === 2 ? "2nd" : k === 3 ? "3rd" : `${k}th`; }
+
+// ---------- Explore the data ----------
+const ex = { summary: null, traces: null, fault: 1, sensor: null, pinnedPair: null };
+Promise.all([getJSON("data/data_summary.json"), getJSON("data/data_traces.json")])
+  .then(([summary, traces]) => { ex.summary = summary; ex.traces = traces; initExplore(); })
+  .catch(() => {
+    $("explore-body").innerHTML = `<div class="empty">The data plots appear once the results include the data summary
+      (exported by the latest version of the pipeline).</div>`;
+  });
+
+const short = v => v.replace("xmeas_", "m").replace("xmv_", "v");
+
+function initExplore() {
+  const { summary, traces } = ex;
+  const q = summary.quality;
+  $("quality-tiles").innerHTML = [
+    tile("Rows checked", int(q.rows), `${int(q.runs)} runs`),
+    tile("Missing values", int(q.missing_values)),
+    tile("Duplicate rows", int(q.duplicate_rows)),
+    tile("Constant variables", String(q.constant_columns.length)),
+    tile("Normal / faulty rows", `${pct(q.class_counts.normal / q.rows, 0)} / ${pct(q.class_counts.faulty / q.rows, 0)}`),
+  ].join("");
+  $("quality-note").textContent = q.missing_values === 0 && q.constant_columns.length === 0
+    ? "The simulated data is complete: nothing needed imputing or dropping. The real issues are the strong correlation between neighbouring samples (handled by splitting by run) and the class imbalance (handled by the choice of metrics)."
+    : "Some quality issues were found; see the counts above.";
+
+  const faults = traces.runs.filter(r => r.fault > 0).map(r => r.fault);
+  $("trace-fault").innerHTML = faults.map(f => `<option value="${f}">Fault ${f}: ${esc(FAULTS[f][0])} (${FAULTS[f][1].toLowerCase()})</option>`).join("");
+  $("trace-fault").value = ex.fault;
+  $("trace-fault").addEventListener("change", e => { ex.fault = +e.target.value; ex.sensor = null; renderSensorList(); renderTrace(); });
+  $("trace-sensor").addEventListener("change", e => { ex.sensor = e.target.value; renderTrace(); });
+  renderSensorList();
+  renderTrace();
+  renderCorr();
+  renderPca();
+}
+
+// How much a fault changes each sensor in its run: mean shift after the fault starts (in normal standard deviations)
+// and the ratio of its spread to normal spread.
+function sensorChanges(fault) {
+  const { summary, traces } = ex, run = traces.runs.find(r => r.fault === fault);
+  return summary.features.map(f => {
+    const v = run.values[f], st = summary.variables[f];
+    const after = v.filter((_, k) => run.sample[k] > traces.onset);
+    const mean = after.reduce((a, b) => a + b, 0) / after.length;
+    const sd = Math.sqrt(after.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, after.length - 1));
+    const shift = st.std > 0 ? (mean - st.mean) / st.std : 0, spread = st.std > 0 ? sd / st.std : 1;
+    return { f, shift, spread, score: Math.abs(shift) + Math.abs(Math.log(Math.max(spread, 1e-9))) * 2 };
+  }).sort((a, b) => b.score - a.score);
+}
+
+function renderSensorList() {
+  const ch = sensorChanges(ex.fault);
+  ex.changes = ch;
+  if (!ex.sensor) ex.sensor = ch[0].f;
+  $("trace-sensor").innerHTML = ch.map(c => `<option value="${c.f}">${c.f} · ${esc(VARIABLES[c.f])} (shift ${c.shift >= 0 ? "+" : ""}${num(c.shift, 1)}σ, spread ×${num(c.spread, 1)})</option>`).join("");
+  $("trace-sensor").value = ex.sensor;
+}
+
+function renderTrace() {
+  const { summary, traces } = ex, f = ex.sensor;
+  const run = traces.runs.find(r => r.fault === ex.fault), normal = traces.runs.find(r => r.fault === 0);
+  const hours = s => (s * traces.sample_minutes) / 60;
+  const st = summary.variables[f];
+  const series = [
+    ...(normal ? [{ name: "Fault-free run", color: COLORS.normal, width: 1.5, points: normal.sample.map((s_, k) => [hours(s_), normal.values[f][k]]) }] : []),
+    { name: `Fault ${ex.fault} run`, color: COLORS.fault, width: 1.8, points: run.sample.map((s_, k) => [hours(s_), run.values[f][k]]) },
+  ];
+  legend($("legend-trace"), series.map(x => ({ label: x.name, color: x.color })).concat([{ label: "Normal range (mean ± 2σ)", color: COLORS.muted, dash: true }]));
+  const all = series.flatMap(x => x.points.map(p => p[1])).concat([st.mean - 2 * st.std, st.mean + 2 * st.std]);
+  const lo = Math.min(...all), hi = Math.max(...all), pad = (hi - lo) * 0.06 || 1;
+  lineChart($("chart-trace"), {
+    height: 300, margin: { left: 70 },
+    x: { domain: [0, 25], ticks: [0, 5, 10, 15, 20, 25], fmt: h => `${h} h`, label: "Time since the run started" },
+    y: { domain: [lo - pad, hi + pad], fmt: y => (Math.abs(y) >= 1000 ? y.toFixed(0) : +y.toPrecision(4)), label: f },
+    series,
+    hlines: [{ y: st.mean + 2 * st.std, color: COLORS.muted, dash: "4 4" }, { y: st.mean - 2 * st.std, color: COLORS.muted, dash: "4 4" }],
+    vlines: [{ x: hours(traces.onset), color: COLORS.text, dash: "4 3", label: "fault starts" }],
+    tip: (s_, p) => `<b>${s_.name}</b><br>${(p[0] * 60).toFixed(0)} min: ${+p[1].toPrecision(5)}`,
+    hoverRadius: 16,
+  });
+  const c = ex.changes.find(x => x.f === f);
+  $("trace-tiles").innerHTML = [
+    tile("Mean shift after the fault", `${c.shift >= 0 ? "+" : ""}${num(c.shift, 1)}σ`),
+    tile("Spread vs normal", `×${num(c.spread, 2)}`),
+    tile("Normal mean", String(+st.mean.toPrecision(5))),
+    tile("Normal σ", String(+st.std.toPrecision(3))),
+  ].join("");
+  const top = ex.changes[0];
+  $("trace-callout").innerHTML = top.score < 1
+    ? `<b>Fault ${ex.fault} barely changes any sensor:</b> the largest shift is ${num(Math.abs(top.shift), 1)}σ. This is why some faults are nearly impossible to detect from a single snapshot.`
+    : Math.abs(c.shift) < 0.5 && c.spread > 1.5
+      ? `<b>This sensor's average hardly moves, but it fluctuates ${num(c.spread, 1)} times as much as normal.</b> A single snapshot can't show that; a rolling standard deviation (the history inputs) can.`
+      : `<b>${f} ${Math.abs(c.shift) >= 2 ? "leaves" : "stays mostly inside"} its normal range after fault ${ex.fault} starts.</b>
+         Note how long the change can take to build up: the readings respond with a delay that depends on the plant's dynamics.`;
+}
+
+function renderCorr() {
+  const { summary } = ex, feats = summary.features, C = summary.correlation;
+  const pairs = [];
+  for (let i = 0; i < feats.length; i++) for (let j = i + 1; j < feats.length; j++) pairs.push([i, j, C[i][j]]);
+  pairs.sort((a, b) => Math.abs(b[2]) - Math.abs(a[2]));
+  heatmap($("chart-corr"), {
+    matrix: C, rowLabels: feats.map(short), colLabels: feats.map(short), diverging: true, diagonal: false, labelEvery: window.innerWidth < 600 ? 10 : 5,
+    ariaLabel: "correlation matrix of the 52 variables", rowTitle: "", colTitle: "",
+    tip: (r, c) => `<b>${feats[r]}</b> ${esc(VARIABLES[feats[r]])}<br><b>${feats[c]}</b> ${esc(VARIABLES[feats[c]])}<br>correlation <b>${num(C[r][c], 2)}</b>`,
+    onClick: (r, c) => { ex.pinnedPair = [r, c]; ex.sensor = feats[r]; $("trace-sensor").value = ex.sensor; renderTrace(); renderCorrPanel(pairs);
+                         document.getElementById("chart-trace").scrollIntoView({ behavior: "smooth", block: "center" }); },
+  });
+  renderCorrPanel(pairs);
+}
+
+function renderCorrPanel(pairs) {
+  const { summary } = ex, feats = summary.features;
+  const strong = pairs.filter(p => Math.abs(p[2]) >= 0.8).length;
+  $("corr-panel").innerHTML = `<h3 style="margin-top:0">Most strongly related pairs</h3>
+    <table><tbody>${pairs.slice(0, 6).map(([i, j, r]) => `<tr><td>${feats[i]} and ${feats[j]}<div class="note">${esc(VARIABLES[feats[i]])} · ${esc(VARIABLES[feats[j]])}</div></td>
+      <td class="n">${num(r, 2)}</td></tr>`).join("")}</tbody></table>
+    <p class="note" style="margin:10px 0 0">${strong === 0 ? "No pair reaches a correlation of 0.8 in this data." : `${strong} pairs have`} ${strong === 0 ? "" : "a correlation of 0.8 or more in either direction."} Many sensors measure
+      linked parts of the plant, so the 52 readings carry much less independent information than their number suggests. That is what PCA
+      exploits, and why a model's individual coefficients can be unstable without regularization.</p>`;
+}
+
+function renderPca() {
+  const v = ex.summary.pca_variance;
+  let run = 0;
+  const cum = v.map((x, k) => [k + 1, (run += x)]), ind = v.map((x, k) => [k + 1, x]);
+  const k90 = cum.find(p => p[1] >= 0.9)?.[0], k99 = cum.find(p => p[1] >= 0.99)?.[0];
+  legend($("legend-pca"), [{ label: "Running total", color: COLORS.data }, { label: "Each component", color: COLORS.fault }]);
+  lineChart($("chart-pca"), {
+    height: 280,
+    x: { domain: [0.5, v.length + 0.5], ticks: [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 52].filter(t => t <= v.length), label: "Principal component" },
+    y: { domain: [0, 1], fmt: y => pct(y, 0), label: "Share of normal variation" },
+    series: [
+      { name: "Each component", color: COLORS.fault, width: 1.5, marker: 2.5, points: ind },
+      { name: "Running total", color: COLORS.data, width: 2.4, marker: 3, points: cum },
+    ],
+    hlines: [{ y: 0.9, color: COLORS.muted, label: "90%", dash: "4 4" }],
+    vlines: k90 ? [{ x: k90, color: COLORS.amber, dash: "4 3", label: `${k90} components` }] : [],
+    tip: (s_, p) => `Component ${p[0]}: <b>${pct(ind[p[0] - 1][1])}</b><br>First ${p[0]} together: <b>${pct(cum[p[0] - 1][1])}</b>`,
+    hoverRadius: 14,
+  });
+  $("pca-callout").innerHTML = `<b>${k90} of the 52 components hold 90% of normal variation</b>${k99 ? `, and ${k99} hold 99%` : ""}.
+    The first component alone captures ${pct(v[0])}. ${k90 <= v.length * 0.6
+      ? "Normal operation varies along far fewer directions than there are sensors, which is the idea behind"
+      : "Here the variation is spread over many directions, so a few components can't summarize normal operation well. That limits"} <a href="detection.html?family=pcamon">PCA monitoring</a>${k90 <= v.length * 0.6 ? ": anything far outside those directions is suspicious" : ""}.`;
+}
