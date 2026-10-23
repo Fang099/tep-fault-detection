@@ -28,7 +28,11 @@ One row is one 3-minute time step of one simulation run. The models use only the
 - **Models:** majority-class baselines; logistic regression with no penalty, lasso (L1) and ridge (L2) at several
   strengths `C`, with and without class weighting (detection); decision trees (depth); random forests (depth, number
   of trees); gradient boosting, AdaBoost and XGBoost (tree depth, boosting rounds). Forests and boosted models are
-  trained once per depth; smaller forests and fewer rounds are read off the same fit.
+  trained once per depth; smaller forests and fewer rounds are read off the same fit. PCA + logistic regression
+  (number of components) and PCA process monitoring (Hotelling's T² and SPE, fitted on fault-free runs only).
+- **Temporal features (ablation):** selected families are also trained with a trailing 30-minute rolling mean and
+  standard deviation of every reading, computed within each run from past samples only.
+- **Uncertainty:** 95% intervals from a run-level bootstrap (whole validation runs resampled within each fault type).
 - **Thresholds and model choice:** each detection model's threshold is set so 5% of normal validation rows raise
   an alarm; the best model catches the most faults at that point. The best diagnosis model has the highest
   validation macro-F1.
@@ -49,6 +53,7 @@ One row is one 3-minute time step of one simulation run. The models use only the
 pip install -r requirements.txt
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100      # subset, faster
 python tep_pipeline.py --data-dir path/to/csvs --families tree,rf          # only some model families
+python tep_pipeline.py --data-dir path/to/csvs --history-families ""     # no history inputs
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0        # all 500 runs per fault
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test
 ```

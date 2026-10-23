@@ -54,7 +54,8 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test</
       <thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>--runs-per-fault</code></td><td class="n">100</td><td>Use the first N runs of each fault type; 0 means all 500.</td></tr>
-        <tr><td><code>--families</code></td><td class="n">all</td><td>Model families to train, comma-separated: <code>logreg,tree,rf,gb,ada,xgb</code>. Finished models are always skipped.</td></tr>
+        <tr><td><code>--families</code></td><td class="n">all</td><td>Model families to train, comma-separated: <code>logreg,pcalr,pcamon,tree,rf,gb,ada,xgb</code>. Finished models are always skipped.</td></tr>
+        <tr><td><code>--history-families</code></td><td class="n">logreg,rf,xgb</td><td>Families also trained with 30-minute rolling mean and standard deviation inputs; an empty string turns this off.</td></tr>
         <tr><td><code>--det-stride</code></td><td class="n">2</td><td>Detection trains on every k-th time step of each run.</td></tr>
         <tr><td><code>--diag-stride</code></td><td class="n">5</td><td>Diagnosis trains on every k-th time step.</td></tr>
         <tr><td><code>--selection-far</code></td><td class="n">0.05</td><td>False-alarm rate used to set thresholds and pick the best detection model.</td></tr>

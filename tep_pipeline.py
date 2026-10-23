@@ -19,6 +19,8 @@ Protocol
 Model families (--families picks which to train; the majority baseline is always included)
   logreg  Logistic regression: class weighting none/balanced (detection only), penalty none/L1/L2, strength C.
           scikit-learn's default LogisticRegression() is already L2 with C=1; "no penalty" here is unregularized.
+  pcalr   PCA + logistic regression: the first k principal components as inputs.
+  pcamon  PCA process monitoring (detection only): Hotelling's T^2 and SPE, fitted on fault-free data, no labels.
   tree    Decision tree: maximum depth.
   rf      Random forest (bagged trees): maximum depth x number of trees.
   gb      Gradient boosting (scikit-learn's histogram version): tree depth x boosting rounds.
@@ -27,6 +29,15 @@ Model families (--families picks which to train; the majority baseline is always
 Forests and boosted models are trained once per depth at the largest size; smaller forests (the first k trees)
 and fewer boosting rounds (the first k rounds) are evaluated from that same fit, so the website can show every
 size without retraining.
+
+Inputs: every family uses the 52 instantaneous readings. Families listed in --history-families are also trained
+with recent history added: a trailing 30-minute (10-sample) mean and standard deviation of each reading, computed
+within each run from past samples only (156 inputs).
+
+Exports per model: score histograms (with the exact thresholds as bin edges), detection delays at several
+false-alarm rates plus a chance reference from fault-free runs, run-level bootstrap intervals, calibration
+(probability models) and score traces for one validation run per fault (run viewer). Results exported by an
+older version are re-exported from the saved models without retraining.
 
 Usage
   python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 100
@@ -46,6 +57,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from scipy import stats
+from sklearn.decomposition import PCA
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import AdaBoostClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -64,7 +77,8 @@ pd.set_option("display.width", 220)
 pd.set_option("display.max_columns", 30)
 pd.set_option("display.max_rows", 200)
 
-ALL_FAMILIES = ["logreg", "tree", "rf", "gb", "ada", "xgb"]
+ALL_FAMILIES = ["logreg", "pcalr", "pcamon", "tree", "rf", "gb", "ada", "xgb"]
+HISTORY_CAPABLE = ["logreg", "tree", "rf", "gb", "ada", "xgb"]
 
 # ---- Command-line settings -----------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="TEP fault detection and diagnosis pipeline")
@@ -77,6 +91,8 @@ parser.add_argument("--runs-per-fault", type=int, default=100,
                     help="use the first N runs of each fault type for train/val; 0 = all 500")
 parser.add_argument("--families", default=",".join(ALL_FAMILIES),
                     help=f"comma-separated model families to train (default: all of {','.join(ALL_FAMILIES)})")
+parser.add_argument("--history-families", default="logreg,rf,xgb",
+                    help="families also trained with 30-minute rolling mean/std inputs (empty string = none)")
 parser.add_argument("--det-stride", type=int, default=2, help="detection trains on every k-th time step")
 parser.add_argument("--diag-stride", type=int, default=5, help="diagnosis trains on every k-th time step")
 parser.add_argument("--selection-far", type=float, default=0.05,
@@ -108,7 +124,7 @@ ID_COLS = ["faultNumber", "simulationRun", "sample"]
 C_GRID = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0]   # website slider values; "none" = no penalty
 CLASS_WEIGHTS = [None, "balanced"]                     # detection only
 SELECTION_FAR = args.selection_far
-FAR_LEVELS = [0.01, 0.05, 0.10]                        # detection delays are precomputed at these alarm rates
+FAR_LEVELS = [0.01, 0.02, 0.05, 0.10, 0.20]            # detection delays are precomputed at these alarm rates
 CONSECUTIVE = 3           # alarms (or correct diagnoses) in a row needed to count as detected
 
 # Neighbouring 3-minute samples are nearly identical, so training on every k-th one cuts time with little loss.
@@ -138,7 +154,19 @@ LEARNING_RATE = 0.1       # gradient boosting and XGBoost
 # term, so its update for that fault exploded). XGBoost's default is 1, so this matches it.
 GB_L2 = 1.0
 
+# ---- PCA, history, uncertainty ---------------------------------------------------------------------
+PCA_COMPONENTS = [2, 5, 10, 15, 20, 30, 40]       # PCA + logistic regression
+PCAMON_COMPONENTS = [5, 10, 15, 20, 25, 30]       # PCA monitoring
+PCAMON_ALPHA = 0.01                               # classical control limits are computed at 99% for comparison
+HIST_WINDOW = 10                                  # 10 samples = 30 minutes of history
+HIST_LR_PENALTIES = ["none", "l2"]                # lasso is slow on 156 inputs, so history LR uses none/ridge
+HIST_XGB_DEPTHS = [4, 8]                          # XGBoost with history: fewer depths to keep run time down
+BOOTSTRAP = 200                                   # run-level bootstrap resamples for 95% intervals
+EXPORT_VERSION = 2                                # bump when the exported files gain new content
+
 FAMILIES = [f.strip() for f in args.families.split(",") if f.strip()]
+HISTORY = [f.strip() for f in args.history_families.split(",") if f.strip()]
+assert not set(HISTORY) - set(HISTORY_CAPABLE), f"--history-families must be among {HISTORY_CAPABLE}"
 unknown = set(FAMILIES) - set(ALL_FAMILIES)
 assert not unknown, f"unknown families: {unknown}; choose from {ALL_FAMILIES}"
 if "xgb" in FAMILIES and XGBClassifier is None:
@@ -189,11 +217,21 @@ FEATURES = [c for c in train_all.columns if c.startswith(("xmeas_", "xmv_"))]
 assert len(FEATURES) == 52
 
 print("Shape:", train_all.shape, " Runs:", train_all["run_id"].nunique())
+
+# Data-quality facts for the website, measured on the data actually used.
+QUALITY = {
+    "rows": int(len(train_all)), "runs": int(train_all["run_id"].nunique()),
+    "missing_values": int(train_all[FEATURES].isna().sum().sum()),
+    "duplicate_rows": int(train_all.duplicated(subset=FEATURES).sum()),
+    "constant_columns": [c for c in FEATURES if train_all[c].nunique() <= 1],
+    "class_counts": {"normal": int((train_all["target"] == 0).sum()), "faulty": int((train_all["target"] == 1).sum())},
+}
 print(train_all["target"].value_counts().rename("rows"))
 
 # ====================================================================================================
 # ## 2. Train / validation split by run
-# Stratified on `faultNumber` (0 = fault-free), so each fault type keeps 400 train / 100 validation runs.
+# Stratified on `faultNumber` (0 = fault-free), so each fault type keeps 80% of its runs for training and 20% for
+# validation.
 
 runs = train_all[["run_id", "faultNumber"]].drop_duplicates()
 train_run_ids, val_run_ids = train_test_split(
@@ -205,24 +243,70 @@ val_df = train_all[is_val].reset_index(drop=True)
 del train_all
 assert set(train_df["run_id"]).isdisjoint(val_df["run_id"])
 
-scaler = StandardScaler().fit(train_df[FEATURES].to_numpy())   # fit on training runs only
-X_val = scaler.transform(val_df[FEATURES].to_numpy())
 y_val = val_df["target"].to_numpy()
 faults_val = val_df["faultNumber"].to_numpy()
-
-det_rows = (train_df["sample"] % DET_STRIDE == 0).to_numpy()
-X_det = scaler.transform(train_df.loc[det_rows, FEATURES].to_numpy())
-y_det = train_df.loc[det_rows, "target"].to_numpy()
-
-diag_rows = ((train_df["target"] == 1) & (train_df["sample"] % DIAG_STRIDE == 0)).to_numpy()
-X_diag = scaler.transform(train_df.loc[diag_rows, FEATURES].to_numpy())
-y_diag = train_df.loc[diag_rows, "faultNumber"].to_numpy()
-
 val_post = y_val == 1                        # diagnosis is evaluated on post-injection rows only
 FAULTS = np.arange(1, 21)
 
+# Training rows: detection uses every DET_STRIDE-th time step, diagnosis every DIAG_STRIDE-th post-fault step.
+det_rows = (train_df["sample"] % DET_STRIDE == 0).to_numpy()
+diag_rows = ((train_df["target"] == 1) & (train_df["sample"] % DIAG_STRIDE == 0)).to_numpy()
+keep_rows = det_rows | diag_rows             # only these rows are kept in memory
+y_det = train_df.loc[det_rows, "target"].to_numpy()
+y_diag = train_df.loc[diag_rows, "faultNumber"].to_numpy()
+
+# ====================================================================================================
+# ## 2b. Inputs: instantaneous readings, optionally with recent history
+# History columns are a trailing mean and standard deviation over the last HIST_WINDOW samples of the same run
+# (the current sample included, nothing after it), so a prediction only uses information available at that time.
+# Scalers are fitted on training runs only.
+
+HIST_NAMES = [f"{f}_mean{HIST_WINDOW}" for f in FEATURES] + [f"{f}_std{HIST_WINDOW}" for f in FEATURES]
+INPUT_NAMES = {"inst": FEATURES, "hist": FEATURES + HIST_NAMES}
+
+
+def history_block(df):
+    """Trailing rolling mean and std of every reading, per run. df must be sorted by run and sample."""
+    g = df.groupby("run_id", sort=False)[FEATURES]
+    mean = g.rolling(HIST_WINDOW, min_periods=1).mean().reset_index(level=0, drop=True).sort_index()
+    std = g.rolling(HIST_WINDOW, min_periods=2).std().reset_index(level=0, drop=True).sort_index().fillna(0.0)
+    return mean.to_numpy(np.float32), std.to_numpy(np.float32)
+
+
+def raw_inputs(df, fs):
+    x = df[FEATURES].to_numpy(np.float32)
+    return x if fs == "inst" else np.hstack([x, *history_block(df)])
+
+
+FEATURE_SETS = ["inst"] + (["hist"] if HISTORY else [])
+scalers, X_train, X_val = {}, {}, {}
+for fs in FEATURE_SETS:
+    t0 = time.time()
+    raw = raw_inputs(train_df, fs)
+    scalers[fs] = StandardScaler().fit(raw)
+    X_train[fs] = scalers[fs].transform(raw[keep_rows]).astype(np.float32)
+    del raw
+    X_val[fs] = scalers[fs].transform(raw_inputs(val_df, fs)).astype(np.float32)
+    print(f"Inputs '{fs}': {X_train[fs].shape[1]} columns ({time.time() - t0:.0f}s)", flush=True)
+det_in_keep, diag_in_keep = det_rows[keep_rows], diag_rows[keep_rows]
+normal_in_keep = (train_df.loc[keep_rows, "faultNumber"] == 0).to_numpy()   # fault-free training runs (PCA monitoring)
+
+
+def task_data(task, fs):
+    """(training inputs, training labels, validation inputs) for one task and input set."""
+    if task == "detection":
+        return X_train[fs][det_in_keep], y_det, X_val[fs]
+    return X_train[fs][diag_in_keep], y_diag, X_val[fs][val_post]
+
+
 print(f"Train: {train_df.shape}  Val: {val_df.shape}")
-print(f"Detection training rows: {X_det.shape}   Diagnosis training rows: {X_diag.shape}")
+print(f"Detection training rows: {int(det_rows.sum())}   Diagnosis training rows: {int(diag_rows.sum())}")
+
+# Validation runs, for the bootstrap and the run viewer.
+run_codes, run_uniques = pd.factorize(val_df["run_id"].to_numpy())
+run_fault = val_df.groupby("run_id", sort=False)["faultNumber"].first().reindex(run_uniques).to_numpy()
+TRACE_RUNS = [int(val_df.loc[val_df["faultNumber"] == f, "run_id"].min()) for f in range(0, 21)
+              if (val_df["faultNumber"] == f).any()]
 
 # ====================================================================================================
 # ## 3. Models
@@ -250,30 +334,33 @@ def make_lr(penalty: str, C: float | None, class_weight=None, multiclass=False) 
 
 # Sanity check: a strongly regularized lasso must set some coefficients to exactly zero.
 if "logreg" in FAMILIES:
-    _idx = np.random.default_rng(SEED).choice(len(X_det), size=min(20000, len(X_det)), replace=False)
-    assert (make_lr("l1", 1e-4).fit(X_det[_idx], y_det[_idx]).coef_ == 0).any(), \
+    _X, _y, _ = task_data("detection", "inst")
+    _idx = np.random.default_rng(SEED).choice(len(_X), size=min(20000, len(_X)), replace=False)
+    assert (make_lr("l1", 1e-4).fit(_X[_idx], _y[_idx]).coef_ == 0).any(), \
         "L1 penalty was not applied; check the scikit-learn version"
     print("scikit-learn API:", "new (l1_ratio)" if NEW_LR_API else "old (penalty=)", "- lasso check passed")
 
 PENALTY_NAMES = {"none": "No penalty", "l1": "Lasso (L1)", "l2": "Ridge (L2)", "baseline": "Majority class"}
+HIST_TAG = {"inst": "", "hist": "_hist"}
+HIST_LABEL = {"inst": "", "hist": ", 30-min history"}
 
 
-def model_id(task, penalty, C=None, class_weight=None):
+def model_id(task, penalty, C=None, class_weight=None, fs="inst"):
     parts = [task, penalty]
     if task == "detection" and penalty != "baseline":
         parts.append("balanced" if class_weight == "balanced" else "unweighted")
     if C is not None:
         parts.append(f"C{C:g}")
-    return "_".join(parts)
+    return "_".join(parts) + HIST_TAG[fs]
 
 
-def model_label(penalty, C=None, class_weight=None):
+def model_label(penalty, C=None, class_weight=None, fs="inst"):
     label = PENALTY_NAMES[penalty]
     if class_weight == "balanced":
         label += ", balanced"
     if C is not None:
         label += f", C={C:g}"
-    return label
+    return label + HIST_LABEL[fs]
 
 # ====================================================================================================
 # ## 4. Evaluation helpers
@@ -285,7 +372,12 @@ def model_label(penalty, C=None, class_weight=None):
 #
 # **Speed:** for each faulty run, minutes from fault injection until `CONSECUTIVE` alarms in a row (detection),
 # or until `CONSECUTIVE` correct diagnoses in a row (diagnosis). Requiring a short streak stops one lucky or
-# random prediction from counting.
+# random prediction from counting. The same rule applied to fault-free runs, as if a fault had started at the
+# usual time, gives a chance reference: how often normal operation alone triggers a "detection".
+#
+# **Uncertainty:** a run-level bootstrap. Validation runs are resampled with replacement within each fault type
+# (whole runs, because rows inside a run are strongly correlated) and the metrics recomputed 200 times; the
+# 2.5th and 97.5th percentiles give a 95% interval. The threshold stays fixed at its validation value.
 
 def threshold_at_far(y, scores, far):
     """Lowest score threshold that flags at most `far` of the normal rows as faulty (flag = score >= threshold).
@@ -324,9 +416,9 @@ def diagnosis_metrics(y_true, y_pred):
 
 
 def streak_delays(run_ids, faults, samples, flags, onset, k=CONSECUTIVE):
-    """Per fault type: median minutes until k consecutive post-onset flags, and share of runs where it happens.
-
-    Rows must be sorted by run and sample (they are)."""
+    """Per fault type: median minutes until k consecutive flags after `onset`, and share of runs where it happens.
+    Fault-free runs (fault 0) are included, measured as if a fault had started at `onset`. Rows must be sorted
+    by run and sample (they are)."""
     flags = flags & (samples > onset)
     cs = np.concatenate([[0], np.cumsum(flags)])
     idx = np.arange(len(flags))
@@ -336,15 +428,71 @@ def streak_delays(run_ids, faults, samples, flags, onset, k=CONSECUTIVE):
         "run": run_ids, "fault": faults,
         "minutes": np.where(streak, (samples - onset) * SAMPLE_MINUTES, np.nan),
     }).groupby("run").agg(fault=("fault", "first"), minutes=("minutes", "min"))
-    per_run = per_run[per_run["fault"] > 0]
     out = per_run.groupby("fault")["minutes"].agg(median_minutes="median", detected="count", runs="size")
     out["detected_share"] = out["detected"] / out["runs"]
     return out[["median_minutes", "detected_share"]]
 
 
 def delays_to_json(table):
-    return {int(f): [None if pd.isna(r.median_minutes) else float(r.median_minutes), round(float(r.detected_share), 4)]
-            for f, r in table.iterrows()}
+    """Split a streak_delays table into per-fault entries and the fault-free chance reference."""
+    row = lambda r: [None if pd.isna(r.median_minutes) else float(r.median_minutes), round(float(r.detected_share), 4)]
+    by_fault = {int(f): row(r) for f, r in table.iterrows() if f > 0}
+    reference = row(table.loc[0]) if 0 in table.index else None
+    return by_fault, reference
+
+
+def bootstrap_detection(scores, threshold):
+    """95% intervals for recall, false alarm rate, precision and F1 at a fixed threshold (run-level bootstrap)."""
+    alarm, pos = scores >= threshold, y_val == 1
+    R = len(run_uniques)
+    counts = np.stack([np.bincount(run_codes, weights=(alarm & pos).astype(float), minlength=R),
+                       np.bincount(run_codes, weights=(~alarm & pos).astype(float), minlength=R),
+                       np.bincount(run_codes, weights=(alarm & ~pos).astype(float), minlength=R),
+                       np.bincount(run_codes, weights=(~alarm & ~pos).astype(float), minlength=R)], axis=1)
+    rng = np.random.default_rng(SEED)            # same resamples for every model, so comparisons are paired
+    totals = np.zeros((BOOTSTRAP, 4))
+    for f in np.unique(run_fault):
+        idx = np.flatnonzero(run_fault == f)
+        totals += counts[idx][rng.integers(0, len(idx), (BOOTSTRAP, len(idx)))].sum(axis=1)
+    tp, fn, fp, tn = totals.T
+    with np.errstate(divide="ignore", invalid="ignore"):
+        recall, far = tp / (tp + fn), fp / (fp + tn)
+        precision = np.where(tp + fp > 0, tp / (tp + fp), 0.0)
+        f1 = np.where(precision + recall > 0, 2 * precision * recall / (precision + recall), 0.0)
+    ci = lambda a: [float(np.nanpercentile(a, 2.5)), float(np.nanpercentile(a, 97.5))]
+    return {"recall": ci(recall), "far": ci(far), "precision": ci(precision), "F1": ci(f1), "resamples": BOOTSTRAP}
+
+
+def bootstrap_diagnosis(pred):
+    """95% intervals for macro-F1 and accuracy (run-level bootstrap within each fault type)."""
+    codes = run_codes[val_post]
+    per_run = np.zeros((len(run_uniques), len(FAULTS)))
+    np.add.at(per_run, (codes, pred.astype(int) - 1), 1)
+    rng = np.random.default_rng(SEED)
+    cms = np.zeros((BOOTSTRAP, len(FAULTS), len(FAULTS)))
+    for f in FAULTS:
+        idx = np.flatnonzero(run_fault == f)
+        cms[:, f - 1, :] = per_run[idx][rng.integers(0, len(idx), (BOOTSTRAP, len(idx)))].sum(axis=1)
+    tp = np.diagonal(cms, axis1=1, axis2=2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        prec = np.where(cms.sum(1) > 0, tp / cms.sum(1), 0.0)
+        rec = np.where(cms.sum(2) > 0, tp / cms.sum(2), 0.0)
+        f1 = np.where(prec + rec > 0, 2 * prec * rec / (prec + rec), 0.0)
+    macro, acc = f1.mean(axis=1), tp.sum(1) / cms.sum((1, 2))
+    ci = lambda a: [float(np.percentile(a, 2.5)), float(np.percentile(a, 97.5))]
+    return {"macro_F1": ci(macro), "accuracy": ci(acc), "resamples": BOOTSTRAP}
+
+
+def calibration(scores):
+    """Reliability data for probability scores: 10 equal-width bins of predicted probability."""
+    b = np.minimum((scores * 10).astype(int), 9)
+    bins = []
+    for k in range(10):
+        m = b == k
+        if m.any():
+            bins.append([float(scores[m].mean()), float(y_val[m].mean()), int(m.sum())])
+    ece = sum(abs(mp - fr) * n for mp, fr, n in bins) / len(scores)
+    return {"bins": bins, "brier": float(np.mean((scores - y_val) ** 2)), "ece": float(ece)}
 
 
 def clean(obj):
@@ -364,22 +512,23 @@ def clean(obj):
 # GitHub Pages is static, so the site can't run models. Each model gets one JSON file.
 #
 # **Detection files** hold histograms of the model's scores for normal rows and for each fault, with
-# quantile-spaced bin edges. Row counts in bin `i` are scores in `[edge[i], edge[i+1])`, so for a slider
-# threshold `t = edge[i]`, rows flagged as faulty = sum of bins `i..end`. From that the browser computes the
-# confusion matrix, precision, recall, F1, normal recall and per-fault recall for any threshold.
-# Detection delays are precomputed at a few false-alarm rates because they can't be rebuilt from histograms.
+# quantile-spaced bin edges plus the exact thresholds for each false-alarm level. Row counts in bin `i` are
+# scores in `[edge[i], edge[i+1])`, so for a slider threshold `t = edge[i]`, rows flagged as faulty = sum of bins
+# `i..end`. From that the browser computes the confusion matrix and every metric for any threshold.
+# Detection delays are precomputed at several false-alarm rates because they can't be rebuilt from histograms.
+# A separate small file per model holds score traces for one validation run per fault (the run viewer), stored
+# as each score's percentile among normal validation rows so every model type shares one scale.
 #
 # **Diagnosis files** hold the confusion matrix, per-fault recall and diagnosis delays.
 #
-# Both say which of the 52 variables the model relies on: logistic regression stores its coefficients (on
-# standardized inputs); tree models store feature importances (how much each variable's splits reduce error).
-#
-# `manifest.json` lists every model, its settings, validation metrics, the chosen best model and test results.
+# Both say which inputs the model relies on: logistic regression stores its coefficients (on standardized
+# inputs); tree models store feature importances (how much each input's splits reduce error).
 
-def score_histograms(y, scores, faults, n_bins=200):
-    edges = np.unique(np.quantile(scores, np.linspace(0, 1, n_bins + 1)))
+def score_histograms(y, scores, faults, extra_edges=(), n_bins=200):
+    edges = np.unique(np.concatenate([np.quantile(scores, np.linspace(0, 1, n_bins + 1)), list(extra_edges)]))
+    edges = edges[(edges >= scores.min()) & (edges <= scores.max())] if len(extra_edges) else edges
     if len(edges) < 2:                                  # constant scores (majority baseline)
-        edges = np.array([edges[0], edges[0] + 1e-6])
+        edges = np.array([scores.min(), scores.min() + 1e-6])
     return {
         "bin_edges": edges,
         "normal_counts": np.histogram(scores[y == 0], edges)[0],
@@ -388,37 +537,56 @@ def score_histograms(y, scores, faults, n_bins=200):
     }
 
 
-def coefficients(model):
+def coefficients(model, names=FEATURES):
     if not hasattr(model, "coef_"):
         return None
     coef = model.coef_
-    return {"features": FEATURES, "values": coef[0] if coef.shape[0] == 1 else coef,
+    return {"features": names, "values": coef[0] if coef.shape[0] == 1 else coef,
             "nonzero": int((coef != 0).any(axis=0).sum())}
 
 
-def importances(values, kind):
+def importances(values, kind, names=FEATURES):
     """Feature importances normalized to sum to 1 (None if the model doesn't provide them)."""
     if values is None:
         return None
     values = np.asarray(values, dtype=float)
     total = values.sum()
     values = values / total if total > 0 else values
-    return {"features": FEATURES, "values": values, "nonzero": int((values > 0).sum()), "kind": kind}
+    return {"features": names, "values": values, "nonzero": int((values > 0).sum()), "kind": kind}
 
 
 def write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(clean(payload), separators=(",", ":")))
 
+
+def write_traces(mid, scores):
+    """Score of every sample in one validation run per fault, as a percentile (0-1000) among normal rows."""
+    normal = np.sort(scores[y_val == 0])
+    run_ids = val_df["run_id"].to_numpy()
+    out = []
+    for r in TRACE_RUNS:
+        m = run_ids == r
+        rank = np.searchsorted(normal, scores[m], side="left") / len(normal)
+        out.append({"run": r, "fault": int(r // 1000), "rank": np.round(rank * 1000).astype(int)})
+    write_json(WEB_DIR / "detection" / "traces" / f"{mid}.json",
+               {"onset": FAULT_ONSET["train"], "sample_minutes": SAMPLE_MINUTES, "runs": out})
+
 # ====================================================================================================
-# ### Tree-based models
-# Every family below produces a list of "checkpoints": (params, validation output, importances, fit seconds).
-# Detection output is the fault probability for every validation row; diagnosis output is the predicted fault
-# for every post-injection validation row. Forests and boosted models fit once at the largest size and read off
-# the smaller sizes, so the fit time of a checkpoint is the share of the full fit it needed.
+# ### Model families
+# Every family produces "checkpoints": dicts with the model's settings, its validation output, which inputs it
+# relies on, and how long it took. Detection output is the fault score of every validation row; diagnosis output
+# is the predicted fault of every post-injection validation row. Forests and boosted models fit once at the
+# largest size and read off the smaller sizes.
 
 FAMILY_INFO = {
     "baseline": {"label": "Majority baseline", "params": []},
     "logreg": {"label": "Logistic regression", "params": []},   # the website has dedicated controls for these
+    "pcalr": {"label": "PCA + logistic regression",
+              "params": [{"key": "k", "label": "Principal components kept", "values": PCA_COMPONENTS}]},
+    "pcamon": {"label": "PCA monitoring (T² / SPE)", "tasks": ["detection"],
+               "params": [{"key": "stat", "label": "Statistic", "values": ["T2", "SPE"], "type": "choice"},
+                          {"key": "k", "label": "Principal components kept", "values": PCAMON_COMPONENTS}]},
     "tree": {"label": "Decision tree", "params": [{"key": "depth", "label": "Maximum depth", "values": TREE_DEPTHS}]},
     "rf": {"label": "Random forest", "params": [{"key": "depth", "label": "Maximum depth", "values": RF_DEPTHS},
                                                 {"key": "trees", "label": "Number of trees", "values": RF_TREES}]},
@@ -429,27 +597,49 @@ FAMILY_INFO = {
     "xgb": {"label": "XGBoost", "params": [{"key": "depth", "label": "Tree depth", "values": XGB_DEPTHS},
                                            {"key": "rounds", "label": "Boosting rounds", "values": XGB_ROUNDS}]},
 }
-PARAM_TAGS = {"depth": "d", "trees": "t", "rounds": "r"}
+PARAM_TAGS = {"depth": "d", "trees": "t", "rounds": "r", "k": "k"}
 
 
-def tree_id(task, family, params):
-    return f"{task}_{family}_" + "_".join(f"{PARAM_TAGS[k]}{v}" for k, v in params.items())
+def unit_id(task, family, params, fs):
+    if family == "pcamon":
+        return f"{task}_pcamon_{params['stat'].lower()}_k{params['k']}"
+    return f"{task}_{family}_" + "_".join(f"{PARAM_TAGS[k]}{v}" for k, v in params.items()) + HIST_TAG[fs]
 
 
-def tree_label(family, params):
+def unit_label(family, params, fs):
     p = params
     return {
+        "pcalr": lambda: f"PCA + logistic regression, {p['k']} components",
+        "pcamon": lambda: f"PCA monitoring, {'T²' if p['stat'] == 'T2' else 'SPE'}, {p['k']} components",
         "tree": lambda: f"Decision tree, depth {p['depth']}",
         "rf": lambda: f"Random forest, depth {p['depth']}, {p['trees']} tree{'s' if p['trees'] != 1 else ''}",
         "gb": lambda: f"Gradient boosting, depth {p['depth']}, {p['rounds']} rounds",
         "ada": lambda: f"AdaBoost, depth-{p['depth']} trees, {p['rounds']} rounds",
         "xgb": lambda: f"XGBoost, depth {p['depth']}, {p['rounds']} rounds",
-    }[family]()
+    }[family]() + HIST_LABEL[fs]
+
+
+def family_units(family, fs):
+    """The separate fits a family needs (one per depth, one per component count, or one for everything)."""
+    return {"pcalr": PCA_COMPONENTS, "pcamon": [None], "tree": TREE_DEPTHS, "rf": RF_DEPTHS, "gb": GB_DEPTHS,
+            "ada": ADA_DEPTHS, "xgb": HIST_XGB_DEPTHS if fs == "hist" else XGB_DEPTHS}[family]
+
+
+def checkpoint_params(family, unit):
+    if family == "pcalr":
+        return [{"k": unit}]
+    if family == "pcamon":
+        return [{"stat": s, "k": k} for s in ("T2", "SPE") for k in PCAMON_COMPONENTS]
+    if family == "tree":
+        return [{"depth": unit}]
+    key, values = {"rf": ("trees", RF_TREES), "gb": ("rounds", GB_ROUNDS),
+                   "ada": ("rounds", ADA_ROUNDS), "xgb": ("rounds", XGB_ROUNDS)}[family]
+    return [{"depth": unit, key: v} for v in values]
 
 
 def subsample(X, y, fraction, seed=SEED):
-    idx = np.random.default_rng(seed).choice(len(X), size=int(len(X) * fraction), replace=False)
-    return X[np.sort(idx)], y[np.sort(idx)]
+    idx = np.sort(np.random.default_rng(seed).choice(len(X), size=int(len(X) * fraction), replace=False))
+    return X[idx], y[idx]
 
 
 def task_output(task, proba, classes):
@@ -457,109 +647,142 @@ def task_output(task, proba, classes):
     return proba[:, 1].astype("float64") if task == "detection" else classes[np.argmax(proba, axis=1)]
 
 
-def fit_family(task, family, depth, X, y, Xv):
-    """Fit one family at one depth and return checkpoints [(params, output, importances, fit_seconds)]."""
-    t0 = time.time()
+def build_tree_model(task, family, params):
+    """A model with these exact settings (also used to retrain the chosen model for the final test)."""
+    d = params.get("depth")
     if family == "tree":
-        m = DecisionTreeClassifier(max_depth=depth, random_state=SEED).fit(X, y)
-        secs = time.time() - t0
-        return m, [({"depth": depth}, task_output(task, m.predict_proba(Xv), m.classes_),
-                    importances(m.feature_importances_, "impurity"), secs)]
-
+        return DecisionTreeClassifier(max_depth=d, random_state=SEED)
     if family == "rf":
-        m = RandomForestClassifier(n_estimators=max(RF_TREES), max_depth=depth, max_samples=RF_SAMPLE,
-                                   n_jobs=-1, random_state=SEED).fit(X, y)
-        secs = time.time() - t0
-        out, total, imp = [], None, np.zeros(len(FEATURES))
-        for k, est in enumerate(m.estimators_, start=1):
+        return RandomForestClassifier(n_estimators=params.get("trees", max(RF_TREES)), max_depth=d,
+                                      max_samples=RF_SAMPLE, n_jobs=-1, random_state=SEED)
+    if family == "gb":
+        return HistGradientBoostingClassifier(max_iter=params.get("rounds", max(GB_ROUNDS)), max_depth=d,
+                                              learning_rate=LEARNING_RATE, l2_regularization=GB_L2,
+                                              early_stopping=False, random_state=SEED)
+    if family == "ada":
+        return AdaBoostClassifier(DecisionTreeClassifier(max_depth=d), n_estimators=params.get("rounds", max(ADA_ROUNDS)),
+                                  random_state=SEED)
+    if family == "xgb":
+        return XGBClassifier(n_estimators=params.get("rounds", max(XGB_ROUNDS)), max_depth=d, learning_rate=LEARNING_RATE,
+                             tree_method="hist", n_jobs=-1, random_state=SEED,
+                             eval_metric="logloss" if task == "detection" else "mlogloss")
+    raise ValueError(family)
+
+
+def fit_tree_model(task, family, depth, X, y):
+    if family == "ada":
+        X, y = subsample(X, y, ADA_SAMPLE)
+    model = build_tree_model(task, family, {"depth": depth})
+    if family == "xgb":
+        # XGBoost needs class labels 0..K-1, so faults 1..20 are shifted down and back up afterwards.
+        model.fit(X, np.searchsorted(np.unique(y), y))
+        model.tep_classes_ = np.unique(y)
+    else:
+        model.fit(X, y)
+    return model
+
+
+def tree_checkpoints(task, family, depth, model, Xv, secs, names):
+    """Validation output at every checkpoint size, read off one fitted model."""
+    cp = lambda params, out, explain, s: {"params": params, "output": out, "explain": explain, "secs": s}
+    if family == "tree":
+        return [cp({"depth": depth}, task_output(task, model.predict_proba(Xv), model.classes_),
+                   importances(model.feature_importances_, "impurity", names), secs)]
+    if family == "rf":
+        out, total, imp = [], None, np.zeros(len(names))
+        for k, est in enumerate(model.estimators_, start=1):
             p = est.predict_proba(Xv)
             total = p if total is None else total + p
             imp += est.feature_importances_
             if k in RF_TREES:
-                out.append(({"depth": depth, "trees": k}, task_output(task, total / k, m.classes_),
-                            importances(imp / k, "impurity"), secs * k / len(m.estimators_)))
-        return m, out
-
+                out.append(cp({"depth": depth, "trees": k}, task_output(task, total / k, model.classes_),
+                              importances(imp / k, "impurity", names), secs * k / len(model.estimators_)))
+        return out
     if family == "gb":
-        m = HistGradientBoostingClassifier(max_iter=max(GB_ROUNDS), max_depth=depth, learning_rate=LEARNING_RATE,
-                                           l2_regularization=GB_L2, early_stopping=False, random_state=SEED).fit(X, y)
-        secs = time.time() - t0
-        out = []
-        for k, p in enumerate(m.staged_predict_proba(Xv), start=1):
-            if k in GB_ROUNDS:
-                # scikit-learn's histogram boosting has no built-in feature importances.
-                out.append(({"depth": depth, "rounds": k}, task_output(task, p, m.classes_), None, secs * k / max(GB_ROUNDS)))
-        return m, out
-
+        # scikit-learn's histogram boosting has no built-in feature importances.
+        return [cp({"depth": depth, "rounds": k}, task_output(task, p, model.classes_), None, secs * k / max(GB_ROUNDS))
+                for k, p in enumerate(model.staged_predict_proba(Xv), start=1) if k in GB_ROUNDS]
     if family == "ada":
-        Xs, ys = subsample(X, y, ADA_SAMPLE)
-        m = AdaBoostClassifier(DecisionTreeClassifier(max_depth=depth), n_estimators=max(ADA_ROUNDS),
-                               random_state=SEED).fit(Xs, ys)
-        secs = time.time() - t0
-        n_fit = len(m.estimators_)          # AdaBoost stops early if a round fits perfectly or gets no better than chance
-        staged = list(m.staged_predict_proba(Xv))
-        out, imp, wsum = [], np.zeros(len(FEATURES)), 0.0
-        weights = m.estimator_weights_
-        cum_imp = []
+        n_fit = len(model.estimators_)       # AdaBoost stops early if a round fits perfectly or is no better than chance
+        staged = list(model.staged_predict_proba(Xv))
+        imp, wsum, cum = np.zeros(len(names)), 0.0, []
         for k in range(n_fit):
-            imp = imp + weights[k] * m.estimators_[k].feature_importances_
-            wsum += weights[k]
-            cum_imp.append(imp / wsum if wsum > 0 else imp)
-        for r in ADA_ROUNDS:
-            k = min(r, n_fit)
-            out.append(({"depth": depth, "rounds": r}, task_output(task, staged[k - 1], m.classes_),
-                        importances(cum_imp[k - 1], "weighted impurity"), secs * k / max(ADA_ROUNDS)))
-        return m, out
-
+            imp = imp + model.estimator_weights_[k] * model.estimators_[k].feature_importances_
+            wsum += model.estimator_weights_[k]
+            cum.append(imp / wsum if wsum > 0 else imp)
+        return [cp({"depth": depth, "rounds": r}, task_output(task, staged[min(r, n_fit) - 1], model.classes_),
+                   importances(cum[min(r, n_fit) - 1], "weighted impurity", names), secs * min(r, n_fit) / max(ADA_ROUNDS))
+                for r in ADA_ROUNDS]
     if family == "xgb":
-        # XGBoost needs class labels 0..K-1, so faults 1..20 are shifted down by one and back up afterwards.
-        classes = np.unique(y)
-        y_enc = np.searchsorted(classes, y)
-        m = XGBClassifier(n_estimators=max(XGB_ROUNDS), max_depth=depth, learning_rate=LEARNING_RATE,
-                          tree_method="hist", n_jobs=-1, random_state=SEED,
-                          eval_metric="logloss" if task == "detection" else "mlogloss").fit(X, y_enc)
-        secs = time.time() - t0
-        gain = m.get_booster().get_score(importance_type="gain")
-        imp = importances([gain.get(f"f{j}", 0.0) for j in range(len(FEATURES))], "gain")
-        out = []
-        for r in XGB_ROUNDS:
-            p = m.predict_proba(Xv, iteration_range=(0, r))
-            out.append(({"depth": depth, "rounds": r}, task_output(task, p, classes), imp, secs * r / max(XGB_ROUNDS)))
-        return m, out
-
+        gain = model.get_booster().get_score(importance_type="gain")
+        imp = importances([gain.get(f"f{j}", 0.0) for j in range(len(names))], "gain", names)
+        classes = getattr(model, "tep_classes_", FAULTS if task == "diagnosis" else np.array([0, 1]))
+        return [cp({"depth": depth, "rounds": r}, task_output(task, model.predict_proba(Xv, iteration_range=(0, r)),
+                                                               classes), imp, secs * r / max(XGB_ROUNDS))
+                for r in XGB_ROUNDS]
     raise ValueError(family)
 
 
-def family_depths(family):
-    return {"tree": TREE_DEPTHS, "rf": RF_DEPTHS, "gb": GB_DEPTHS, "ada": ADA_DEPTHS, "xgb": XGB_DEPTHS}[family]
+def fit_pcalr(task, k, X, y):
+    pca = PCA(n_components=k, random_state=SEED).fit(X)
+    lr = make_lr("none", None, "balanced" if task == "detection" else None, multiclass=(task == "diagnosis"))
+    lr.fit(pca.transform(X), y)
+    return {"pca": pca, "lr": lr}
 
 
-def checkpoint_params(family, depth):
-    if family == "tree":
-        return [{"depth": depth}]
-    key, values = {"rf": ("trees", RF_TREES), "gb": ("rounds", GB_ROUNDS),
-                   "ada": ("rounds", ADA_ROUNDS), "xgb": ("rounds", XGB_ROUNDS)}[family]
-    return [{"depth": depth, key: v} for v in values]
+def pcalr_checkpoint(task, k, model, Xv, secs):
+    pca, lr = model["pca"], model["lr"]
+    proba = lr.predict_proba(pca.transform(Xv))
+    # The model is linear in the original (standardized) sensors: z = w . (P x) = (P^T w) . x
+    coef = lr.coef_ @ pca.components_
+    explain = {"features": FEATURES, "values": coef[0] if coef.shape[0] == 1 else coef, "nonzero": len(FEATURES)}
+    extra = {"explained_variance": float(pca.explained_variance_ratio_.sum())}
+    return [{"params": {"k": k}, "output": task_output(task, proba, lr.classes_), "explain": explain, "secs": secs,
+             "extra": extra}]
 
 
-def build_tree_model(task, family, params):
-    """A model with these exact settings, for the final test (retrained at that size)."""
-    d = params["depth"]
-    if family == "tree":
-        return DecisionTreeClassifier(max_depth=d, random_state=SEED)
-    if family == "rf":
-        return RandomForestClassifier(n_estimators=params["trees"], max_depth=d, max_samples=RF_SAMPLE,
-                                      n_jobs=-1, random_state=SEED)
-    if family == "gb":
-        return HistGradientBoostingClassifier(max_iter=params["rounds"], max_depth=d, learning_rate=LEARNING_RATE,
-                                              l2_regularization=GB_L2, early_stopping=False, random_state=SEED)
-    if family == "ada":
-        return AdaBoostClassifier(DecisionTreeClassifier(max_depth=d), n_estimators=params["rounds"], random_state=SEED)
-    if family == "xgb":
-        return XGBClassifier(n_estimators=params["rounds"], max_depth=d, learning_rate=LEARNING_RATE,
-                             tree_method="hist", n_jobs=-1, random_state=SEED,
-                             eval_metric="logloss" if task == "detection" else "mlogloss")
-    raise ValueError(family)
+def pca_monitor_fit(X_normal):
+    return PCA(random_state=SEED).fit(X_normal)
+
+
+def pca_monitor_scores(pca, X, k):
+    """Hotelling's T^2 (distance inside the k-dimensional model plane, scaled by each component's variance) and
+    SPE (squared distance from the plane, i.e. what the model can't explain)."""
+    P, lam = pca.components_[:k], pca.explained_variance_[:k]
+    Xc = X - pca.mean_
+    T = Xc @ P.T
+    t2 = np.sum(T ** 2 / lam, axis=1)
+    spe = np.sum((Xc - T @ P) ** 2, axis=1)
+    return t2.astype("float64"), spe.astype("float64")
+
+
+def pca_monitor_limits(pca, k, n):
+    """Classical control limits at 1 - PCAMON_ALPHA: F-distribution for T^2, Jackson-Mudholkar for SPE."""
+    a = 1 - PCAMON_ALPHA
+    t2_lim = k * (n - 1) * (n + 1) / (n * (n - k)) * stats.f.ppf(a, k, n - k)
+    rest = pca.explained_variance_[k:]
+    th1, th2, th3 = (rest ** 1).sum(), (rest ** 2).sum(), (rest ** 3).sum()
+    h0 = 1 - 2 * th1 * th3 / (3 * th2 ** 2)
+    c = stats.norm.ppf(a)
+    spe_lim = th1 * (c * np.sqrt(2 * th2 * h0 ** 2) / th1 + 1 + th2 * h0 * (h0 - 1) / th1 ** 2) ** (1 / h0)
+    return float(t2_lim), float(spe_lim)
+
+
+def pcamon_checkpoints(Xv, X_normal, secs_fit):
+    t0 = time.time()
+    pca = pca_monitor_fit(X_normal)
+    secs = secs_fit + time.time() - t0
+    out = []
+    for k in PCAMON_COMPONENTS:
+        t2, spe = pca_monitor_scores(pca, Xv, k)
+        t2_lim, spe_lim = pca_monitor_limits(pca, k, len(X_normal))
+        for stat, s, lim in (("T2", t2, t2_lim), ("SPE", spe, spe_lim)):
+            normal = s[y_val == 0]
+            extra = {"score_kind": "stat", "explained_variance": float(pca.explained_variance_ratio_[:k].sum()),
+                     "classical_limit": lim, "classical_far": float((normal >= lim).mean()),
+                     "classical_recall": float((s[y_val == 1] >= lim).mean()), "train_normal_rows": int(len(X_normal))}
+            out.append({"params": {"stat": stat, "k": k}, "output": s, "explain": None, "secs": secs, "extra": extra})
+    return pca, out
 
 
 def describe(summary):
@@ -568,137 +791,181 @@ def describe(summary):
         summary["family"] = "baseline" if summary.get("penalty") == "baseline" else "logreg"
         summary["params"] = {} if summary["family"] == "baseline" else {
             "penalty": summary["penalty"], "C": summary.get("C"), "class_weight": summary.get("class_weight", "none")}
+    summary.setdefault("features", "inst")
     return summary
 
 # ====================================================================================================
 # ## 6. Evaluate and export one model
 # Shared by every family, so all models are measured exactly the same way.
 
-def export_detection(mid, label, family, params, scores, fit_seconds, explain, baseline=False, extra=None):
+def export_detection(mid, label, family, params, scores, fit_seconds, explain, fs="inst", baseline=False, extra=None):
     # The baseline always predicts "fault"; every other model is set to 5% false alarms on validation.
     threshold = 0.5 if baseline else threshold_at_far(y_val, scores, SELECTION_FAR)
     metrics = detection_metrics(y_val, scores, threshold)
-    delays = {}
+    delays, thresholds = {}, [threshold]
     for far in FAR_LEVELS:
         t = threshold_at_far(y_val, scores, far)
-        delays[str(far)] = {"threshold": t, "by_fault": delays_to_json(streak_delays(
-            val_df["run_id"].to_numpy(), faults_val, val_df["sample"].to_numpy(), scores >= t, FAULT_ONSET["train"]))}
-    summary = {"id": mid, "family": family, "label": label, "params": params, "fit_seconds": round(fit_seconds, 1),
-               "val": metrics, "coef_nonzero": (explain or {}).get("nonzero"), **(extra or {})}
-    payload = {"summary": summary, "val": {**score_histograms(y_val, scores, faults_val), "delays": delays}}
-    payload["coefficients" if family in ("logreg", "baseline") else "importances"] = explain
+        thresholds.append(t)
+        by_fault, reference = delays_to_json(streak_delays(
+            val_df["run_id"].to_numpy(), faults_val, val_df["sample"].to_numpy(), scores >= t, FAULT_ONSET["train"]))
+        delays[str(far)] = {"threshold": t, "by_fault": by_fault, "reference": reference}
+    extra = dict(extra or {})
+    score_kind = extra.pop("score_kind", "prob")
+    summary = {"id": mid, "family": family, "label": label, "params": params, "features": fs,
+               "n_inputs": len(INPUT_NAMES[fs]), "score_kind": score_kind, "fit_seconds": round(fit_seconds, 1),
+               "val": metrics, "ci": None if baseline else bootstrap_detection(scores, threshold),
+               "coef_nonzero": (explain or {}).get("nonzero"), "export_version": EXPORT_VERSION, **extra}
+    payload = {"summary": summary, "val": {**score_histograms(y_val, scores, faults_val, thresholds), "delays": delays}}
+    if score_kind == "prob" and not baseline:
+        payload["calibration"] = calibration(scores)
+    payload["coefficients" if family in ("logreg", "baseline", "pcalr") else "importances"] = explain
     write_json(WEB_DIR / "detection" / f"{mid}.json", payload)
-    print(f"{mid:45s} recall@5%FAR={metrics['recall']:.3f}  ({fit_seconds:.0f}s)", flush=True)
+    write_traces(mid, scores)
+    print(f"{mid:48s} recall@5%FAR={metrics['recall']:.3f}  ({fit_seconds:.0f}s)", flush=True)
     return clean(summary)
 
 
-def export_diagnosis(mid, label, family, params, pred, fit_seconds, explain, extra=None):
+def export_diagnosis(mid, label, family, params, pred, fit_seconds, explain, fs="inst", extra=None):
     true = faults_val[val_post]
     metrics, cm, recall = diagnosis_metrics(true, pred)
-    delays = delays_to_json(streak_delays(val_df["run_id"].to_numpy()[val_post], true,
-                                          val_df["sample"].to_numpy()[val_post], pred == true, FAULT_ONSET["train"]))
-    summary = {"id": mid, "family": family, "label": label, "params": params, "fit_seconds": round(fit_seconds, 1),
-               "val": metrics, "coef_nonzero": (explain or {}).get("nonzero"), **(extra or {})}
-    payload = {"summary": summary, "val": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall, "delays": delays}}
-    payload["coefficients" if family in ("logreg", "baseline") else "importances"] = explain
+    by_fault, _ = delays_to_json(streak_delays(val_df["run_id"].to_numpy()[val_post], true,
+                                               val_df["sample"].to_numpy()[val_post], pred == true, FAULT_ONSET["train"]))
+    summary = {"id": mid, "family": family, "label": label, "params": params, "features": fs,
+               "n_inputs": len(INPUT_NAMES[fs]), "fit_seconds": round(fit_seconds, 1), "val": metrics,
+               "ci": None if family == "baseline" else bootstrap_diagnosis(pred),
+               "coef_nonzero": (explain or {}).get("nonzero"), "export_version": EXPORT_VERSION, **(extra or {})}
+    payload = {"summary": summary, "val": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall, "delays": by_fault}}
+    payload["coefficients" if family in ("logreg", "baseline", "pcalr") else "importances"] = explain
     write_json(WEB_DIR / "diagnosis" / f"{mid}.json", payload)
-    print(f"{mid:45s} macro-F1={metrics['macro_F1']:.3f}  ({fit_seconds:.0f}s)", flush=True)
+    print(f"{mid:48s} macro-F1={metrics['macro_F1']:.3f}  ({fit_seconds:.0f}s)", flush=True)
     return clean(summary)
 
 
-def load_existing(task, mid, family):
-    """Summary of an already exported model, or None if it should be (re)trained this run."""
+def existing_summary(task, mid):
+    """Summary of an exported model (any version), or None."""
     path = WEB_DIR / task / f"{mid}.json"
-    if not path.exists() or (FORCE_RETRAIN and family in FAMILIES):
-        return None
-    return describe(json.loads(path.read_text())["summary"])
+    return describe(json.loads(path.read_text())["summary"]) if path.exists() else None
+
+
+def up_to_date(summary):
+    return summary is not None and summary.get("export_version", 1) >= EXPORT_VERSION
+
+
+def forced(family):
+    return FORCE_RETRAIN and family in FAMILIES
 
 # ====================================================================================================
 # ## 7. Train and evaluate every model
-# Baseline and logistic regression first, then the tree-based families. Each task uses its own training rows:
-# detection all rows, diagnosis post-injection rows only.
+# For each model: reuse its export if current; otherwise reload the saved model and re-export (no retraining);
+# otherwise train it if its family was requested. Families not requested keep whatever was exported before.
 
-TASK_DATA = {
-    "detection": (X_det, y_det, X_val),
-    "diagnosis": (X_diag, y_diag, X_val[val_post]),
-}
-
-
-def run_linear(task):
-    """Majority baseline plus every logistic-regression variant for one task."""
-    X, y, Xv = TASK_DATA[task]
-    configs = [("baseline", None, None)]
+def run_linear(task, fs="inst"):
+    """Majority baseline plus logistic-regression variants for one task and input set."""
+    X, y, Xv = task_data(task, fs)
     weights = CLASS_WEIGHTS if task == "detection" else [None]
+    penalties = HIST_LR_PENALTIES if fs == "hist" else ["none", "l1", "l2"]
+    configs = [("baseline", None, None)] if fs == "inst" else []
     for cw in weights:
-        configs.append(("none", None, cw))
-        configs += [(p, C, cw) for p in ("l1", "l2") for C in C_GRID]
+        configs += [(p, C, cw) for p in penalties for C in ([None] if p == "none" else C_GRID)]
+    train_lr = ("logreg" in FAMILIES) and (fs == "inst" or "logreg" in HISTORY)
     summaries = []
     for penalty, C, cw in configs:
-        mid = model_id(task, penalty, C, cw)
+        mid = model_id(task, penalty, C, cw, fs)
         family = "baseline" if penalty == "baseline" else "logreg"
-        existing = load_existing(task, mid, "baseline" if family == "baseline" else "logreg")
-        if existing:
-            summaries.append(existing)
+        old = existing_summary(task, mid)
+        if up_to_date(old) and not forced(family):
+            summaries.append(old)
             continue
-        if family == "logreg" and "logreg" not in FAMILIES:
-            continue                       # not trained this run and not exported before
-        model = (DummyClassifier(strategy="most_frequent") if penalty == "baseline"
-                 else make_lr(penalty, C, cw, multiclass=(task == "diagnosis")))
-        t0 = time.time()
-        model.fit(X, y)
-        secs = time.time() - t0
-        joblib.dump(model, MODEL_DIR / f"{mid}.joblib")
-        family = "baseline" if penalty == "baseline" else "logreg"
+        path = MODEL_DIR / f"{mid}.joblib"
+        if path.exists() and not forced(family) and old is not None:
+            model, secs = joblib.load(path), old.get("fit_seconds", 0.0)      # re-export from the saved model
+        elif family == "baseline" or train_lr:
+            model = (DummyClassifier(strategy="most_frequent") if family == "baseline"
+                     else make_lr(penalty, C, cw, multiclass=(task == "diagnosis")))
+            t0 = time.time()
+            model.fit(X, y)
+            secs = time.time() - t0
+            joblib.dump(model, path)
+        else:
+            if old is not None:
+                summaries.append(old)                 # keep the older export as it is
+            continue
         params = {} if family == "baseline" else {"penalty": penalty, "C": C, "class_weight": cw or "none"}
         extra = {"penalty": penalty, "C": C, **({"class_weight": cw or "none"} if task == "detection" else {})}
-        label = model_label(penalty, C, cw)
+        label, explain = model_label(penalty, C, cw, fs), coefficients(model, INPUT_NAMES[fs])
         if task == "detection":
             s = export_detection(mid, label, family, params, model.predict_proba(Xv)[:, 1].astype("float64"), secs,
-                                 coefficients(model), baseline=(penalty == "baseline"), extra=extra)
+                                 explain, fs, baseline=(family == "baseline"), extra=extra)
         else:
-            s = export_diagnosis(mid, label, family, params, model.predict(Xv), secs, coefficients(model), extra=extra)
+            s = export_diagnosis(mid, label, family, params, model.predict(Xv), secs, explain, fs, extra=extra)
         summaries.append(describe(s))
     return summaries
 
 
-def run_trees(task, family):
-    X, y, Xv = TASK_DATA[task]
+def run_family(task, family, fs="inst"):
+    if family == "pcamon" and task != "detection":
+        return []
+    X, y, Xv = task_data(task, fs)
+    names = INPUT_NAMES[fs]
+    train_this = family in FAMILIES and (fs == "inst" or family in HISTORY)
     summaries = []
-    for depth in family_depths(family):
-        ids = [tree_id(task, family, p) for p in checkpoint_params(family, depth)]
-        existing = [load_existing(task, mid, family) for mid in ids]
-        if all(existing):
-            summaries += existing
+    for unit in family_units(family, fs):
+        cps = checkpoint_params(family, unit)
+        ids = [unit_id(task, family, p, fs) for p in cps]
+        olds = [existing_summary(task, mid) for mid in ids]
+        if all(up_to_date(o) for o in olds) and not forced(family):
+            summaries += olds
             continue
-        if family not in FAMILIES:
-            summaries += [e for e in existing if e]     # keep whatever was exported earlier
-            continue
-        model, checkpoints = fit_family(task, family, depth, X, y, Xv)
-        joblib.dump(model, MODEL_DIR / f"{task}_{family}_d{depth}.joblib")
-        for params, output, explain, secs in checkpoints:
-            mid, label = tree_id(task, family, params), tree_label(family, params)
-            if task == "detection":
-                summaries.append(export_detection(mid, label, family, params, output, secs, explain))
+        if family == "pcamon":
+            # Cheap to recompute, so it is never stored: recompute when requested, otherwise keep older exports.
+            if not train_this:
+                summaries += [o for o in olds if o is not None]
+                continue
+            _, checkpoints = pcamon_checkpoints(Xv, X_train["inst"][normal_in_keep], 0.0)
+        else:
+            name = f"{task}_pcalr_k{unit}" if family == "pcalr" else f"{task}_{family}_d{unit}{HIST_TAG[fs]}"
+            model_path = MODEL_DIR / f"{name}.joblib"
+            if model_path.exists() and not forced(family):
+                model = joblib.load(model_path)            # re-export from the saved model, no retraining
+                secs = max((o.get("fit_seconds", 0.0) for o in olds if o is not None), default=0.0)
+            elif train_this:
+                t0 = time.time()
+                model = fit_pcalr(task, unit, X, y) if family == "pcalr" else fit_tree_model(task, family, unit, X, y)
+                secs = time.time() - t0
+                joblib.dump(model, model_path)
             else:
-                summaries.append(export_diagnosis(mid, label, family, params, output, secs, explain))
+                summaries += [o for o in olds if o is not None]
+                continue
+            checkpoints = (pcalr_checkpoint(task, unit, model, Xv, secs) if family == "pcalr"
+                           else tree_checkpoints(task, family, unit, model, Xv, secs, names))
+        for c in checkpoints:
+            mid, label = unit_id(task, family, c["params"], fs), unit_label(family, c["params"], fs)
+            if task == "detection":
+                summaries.append(export_detection(mid, label, family, c["params"], c["output"], c["secs"], c["explain"],
+                                                  fs, extra=c.get("extra")))
+            else:
+                summaries.append(export_diagnosis(mid, label, family, c["params"], c["output"], c["secs"], c["explain"],
+                                                  fs, extra=c.get("extra")))
     return summaries
 
 
 def run_task(task):
-    """Train the requested families; families not requested keep their previously exported results."""
-    summaries = run_linear(task)
+    summaries = run_linear(task, "inst")
+    if "hist" in FEATURE_SETS:
+        summaries += run_linear(task, "hist")
     for family in ALL_FAMILIES:
         if family == "logreg":
             continue
-        t0 = time.time()
-        summaries += run_trees(task, family)
-        if family in FAMILIES:
-            print(f"--- {task} {FAMILY_INFO[family]['label']}: {time.time() - t0:.0f}s", flush=True)
+        for fs in (["inst", "hist"] if family in HISTORY and "hist" in FEATURE_SETS else ["inst"]):
+            t0 = time.time()
+            summaries += run_family(task, family, fs)
+            if family in FAMILIES:
+                print(f"--- {task} {FAMILY_INFO[family]['label']}{HIST_LABEL[fs]}: {time.time() - t0:.0f}s", flush=True)
     return summaries
 
 
 def summary_table(summaries, metric_keys):
-    rows = [{"id": s["id"], "family": s["family"], "sensors": s.get("coef_nonzero"),
+    rows = [{"id": s["id"], "family": s["family"], "inputs": s.get("features", "inst"), "used": s.get("coef_nonzero"),
              **{k: s["val"][k] for k in metric_keys}} for s in summaries]
     return pd.DataFrame(rows).set_index("id")
 
@@ -707,29 +974,57 @@ det_summaries = run_task("detection")
 det_table = summary_table(det_summaries, ["recall", "precision", "F1", "ROC_AUC", "normal_recall"])
 
 # ### Choosing the best detection model
-# All models are compared at the same operating point (5% false alarms on validation normal rows), so the best
-# model is the one that catches the most faults there: highest validation recall.
+# All models are compared at the same operating point (5% false alarms on validation normal rows), fixed before
+# looking at the results, so the best model is the one that catches the most faults there.
 candidates = det_table[det_table["family"] != "baseline"]
 best_det_id = candidates["recall"].idxmax()
 best_det = next(s for s in det_summaries if s["id"] == best_det_id)
-print("\nBest detection model per family (recall at 5% false alarms):")
-print(candidates.loc[candidates.groupby("family")["recall"].idxmax()].sort_values("recall", ascending=False).round(4))
+print("\nBest detection model per family and input set (recall at 5% false alarms):")
+grp = candidates.groupby(["family", "inputs"])["recall"].idxmax()
+print(candidates.loc[grp].sort_values("recall", ascending=False).round(4))
 print("Best detection model:", best_det["label"])
 
 diag_summaries = run_task("diagnosis")
 diag_table = summary_table(diag_summaries, ["macro_F1", "accuracy"])
-
-# The best diagnosis model has the highest validation macro-F1.
 diag_candidates = diag_table[diag_table["family"] != "baseline"]
 best_diag_id = diag_candidates["macro_F1"].idxmax()
 best_diag = next(s for s in diag_summaries if s["id"] == best_diag_id)
-print("\nBest diagnosis model per family (macro-F1):")
-print(diag_candidates.loc[diag_candidates.groupby("family")["macro_F1"].idxmax()].sort_values("macro_F1", ascending=False).round(4))
+print("\nBest diagnosis model per family and input set (macro-F1):")
+grp = diag_candidates.groupby(["family", "inputs"])["macro_F1"].idxmax()
+print(diag_candidates.loc[grp].sort_values("macro_F1", ascending=False).round(4))
 print("Best diagnosis model:", best_diag["label"])
 
 # ====================================================================================================
-# ## 8. Manifest
-# The website reads this first. The `test` section is filled in by section 9.
+# ## 8. Data summary and manifest
+# data_summary.json: quality checks, per-variable statistics, correlations and PCA variance on fault-free training
+# runs. data_traces.json: every sensor for one run of each fault type (every 2nd sample), for the data explorer.
+
+def export_data_summary():
+    normal = train_df[train_df["faultNumber"] == 0]
+    X_norm = scalers["inst"].transform(normal[FEATURES].to_numpy(np.float32))
+    pca = PCA(random_state=SEED).fit(X_norm)
+    stats_tbl = normal[FEATURES].agg(["mean", "std", "min", "max"]).T
+    write_json(WEB_DIR / "data_summary.json", {
+        "quality": QUALITY,
+        "variables": {f: {k: float(stats_tbl.loc[f, k]) for k in ("mean", "std", "min", "max")} for f in FEATURES},
+        "correlation": np.round(np.corrcoef(normal[FEATURES].to_numpy(np.float64), rowvar=False), 3),
+        "pca_variance": pca.explained_variance_ratio_,
+        "features": FEATURES,
+    })
+    runs_out = []
+    for f in range(0, 21):
+        # The lowest-numbered run of this fault type, from whichever split holds it.
+        options = [(df_["simulationRun"][df_["faultNumber"] == f].min(), df_) for df_ in (train_df, val_df)
+                   if (df_["faultNumber"] == f).any()]
+        if not options:
+            continue
+        r, src = min(options, key=lambda o: o[0])
+        run = src[(src["faultNumber"] == f) & (src["simulationRun"] == r) & (src["sample"] % 2 == 0)].sort_values("sample")
+        runs_out.append({"fault": f, "run": int(r), "sample": run["sample"].to_numpy(),
+                         "values": {c: np.round(run[c].to_numpy(np.float64), 4) for c in FEATURES}})
+    write_json(WEB_DIR / "data_traces.json", {"onset": FAULT_ONSET["train"], "sample_minutes": SAMPLE_MINUTES,
+                                              "runs": runs_out})
+
 
 def best_by_family(summaries, key):
     out = {}
@@ -753,7 +1048,10 @@ def write_manifest(test_results=None):
         "settings": {"C_grid": C_GRID, "class_weights": [c or "none" for c in CLASS_WEIGHTS],
                      "selection_far": SELECTION_FAR, "far_levels": FAR_LEVELS, "consecutive": CONSECUTIVE,
                      "det_stride": DET_STRIDE, "diag_stride": DIAG_STRIDE, "rf_sample": RF_SAMPLE,
-                     "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2},
+                     "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2,
+                     "hist_window": HIST_WINDOW, "bootstrap": BOOTSTRAP, "pcamon_alpha": PCAMON_ALPHA,
+                     "export_version": EXPORT_VERSION, "inputs": {k: len(v) for k, v in INPUT_NAMES.items()},
+                     "trace_runs": TRACE_RUNS},
         "families": [{"key": f, **FAMILY_INFO[f]} for f in present],
         "detection": {"models": det_summaries, "best": best_det_id,
                       "best_by_family": best_by_family(det_summaries, "recall"),
@@ -765,6 +1063,7 @@ def write_manifest(test_results=None):
     })
 
 
+export_data_summary()
 manifest_path = WEB_DIR / "manifest.json"
 previous_test = json.loads(manifest_path.read_text()).get("test") if manifest_path.exists() else None
 write_manifest(previous_test)
@@ -772,53 +1071,72 @@ print("Wrote", manifest_path)
 
 # ====================================================================================================
 # ## 9. Final test evaluation (run once, after model selection)
-# 1. Refit the scaler and retrain the chosen detection and diagnosis models on all training runs (train + val).
+# 1. Refit the scalers and retrain the chosen detection and diagnosis models on all training runs (train + val).
 # 2. Keep the **validation** threshold for detection; nothing is tuned on test.
 # 3. Evaluate once on the test files (fault injected after sample 160) and export the results.
 #
 # The majority baselines are evaluated too, for comparison.
 
-def build_final(task, summary):
+def fit_final(task, summary, X, y, X_normal=None):
     family, p = summary["family"], summary["params"]
     if family == "baseline":
-        return DummyClassifier(strategy="most_frequent")
-    if family == "logreg":
+        model = DummyClassifier(strategy="most_frequent").fit(X, y)
+    elif family == "logreg":
         cw = None if p.get("class_weight", "none") == "none" else p["class_weight"]
-        return make_lr(p["penalty"], p["C"], cw, multiclass=(task == "diagnosis"))
-    return build_tree_model(task, family, p)
-
-
-def fit_final(task, summary, X, y):
-    model = build_final(task, summary)
-    if summary["family"] == "ada":
-        X, y = subsample(X, y, ADA_SAMPLE)
-    classes = np.unique(y)
-    if summary["family"] == "xgb":
-        model.fit(X, np.searchsorted(classes, y))
+        model = make_lr(p["penalty"], p["C"], cw, multiclass=(task == "diagnosis")).fit(X, y)
+    elif family == "pcalr":
+        model = fit_pcalr(task, p["k"], X, y)
+    elif family == "pcamon":
+        model = pca_monitor_fit(X_normal)
     else:
-        model.fit(X, y)
+        model = build_tree_model(task, family, p)
+        if family == "ada":
+            X, y = subsample(X, y, ADA_SAMPLE)
+        if family == "xgb":
+            model.fit(X, np.searchsorted(np.unique(y), y))
+            model.tep_classes_ = np.unique(y)
+        else:
+            model.fit(X, y)
     joblib.dump(model, MODEL_DIR / f"final_{summary['id']}.joblib")
-    return model, classes
+    return model
 
 
-def final_explain(summary, model):
-    if summary["family"] in ("logreg", "baseline"):
-        return coefficients(model)
-    if hasattr(model, "feature_importances_") and summary["family"] != "gb":
-        return importances(model.feature_importances_, "impurity" if summary["family"] != "xgb" else "gain")
+def final_scores(task, summary, model, X):
+    family, p = summary["family"], summary["params"]
+    if family == "pcamon":
+        t2, spe = pca_monitor_scores(model, X, p["k"])
+        return t2 if p["stat"] == "T2" else spe
+    if family == "pcalr":
+        proba = model["lr"].predict_proba(model["pca"].transform(X))
+        classes = model["lr"].classes_
+    else:
+        proba = model.predict_proba(X)
+        classes = getattr(model, "tep_classes_", getattr(model, "classes_", None))
+    return task_output(task, proba, classes)
+
+
+def final_explain(summary, model, names):
+    family = summary["family"]
+    if family in ("logreg", "baseline"):
+        return coefficients(model, names)
+    if family == "pcalr":
+        coef = model["lr"].coef_ @ model["pca"].components_
+        return {"features": FEATURES, "values": coef[0] if coef.shape[0] == 1 else coef, "nonzero": len(FEATURES)}
+    if family in ("tree", "rf", "ada") or family == "xgb":
+        if family == "xgb":
+            gain = model.get_booster().get_score(importance_type="gain")
+            return importances([gain.get(f"f{j}", 0.0) for j in range(len(names))], "gain", names)
+        return importances(model.feature_importances_, "impurity", names)
     return None
 
 
 if args.final_test:
-    full_df = pd.concat([train_df, val_df], ignore_index=True)
-    final_scaler = StandardScaler().fit(full_df[FEATURES].to_numpy())
-
+    full_df = pd.concat([train_df, val_df]).sort_values(["run_id", "sample"], ignore_index=True)
     test_normal = load_tep("TEP_FaultFree_Testing")
     test_faulty = load_tep("TEP_Faulty_Testing")
     test_faulty = test_faulty[test_faulty["simulationRun"] <= TEST_RUNS_PER_FAULT]
     test_df = prepare(test_normal, test_faulty, FAULT_ONSET["test"])
     del test_normal, test_faulty
-    X_test = final_scaler.transform(test_df[FEATURES].to_numpy())
     y_test = test_df["target"].to_numpy()
     faults_test = test_df["faultNumber"].to_numpy()
     runs_test, samples_test = test_df["run_id"].to_numpy(), test_df["sample"].to_numpy()
@@ -826,46 +1144,51 @@ if args.final_test:
     test_results = {"rows": int(len(test_df)), "fault_share": float(y_test.mean()),
                     "runs_per_fault": TEST_RUNS_PER_FAULT, "detection": {}, "diagnosis": {}}
 
-    # ---- Detection ----
-    rows = (full_df["sample"] % DET_STRIDE == 0).to_numpy()
-    X_full = final_scaler.transform(full_df.loc[rows, FEATURES].to_numpy())
-    y_full = full_df.loc[rows, "target"].to_numpy()
-    for summary in (best_det, next(s for s in det_summaries if s["family"] == "baseline")):
-        model, classes = fit_final("detection", summary, X_full, y_full)
-        scores = model.predict_proba(X_test)[:, 1].astype("float64")
-        threshold = summary["val"]["threshold"]                     # chosen on validation
-        metrics = detection_metrics(y_test, scores, threshold)
-        delays = delays_to_json(streak_delays(runs_test, faults_test, samples_test,
-                                              scores >= threshold, FAULT_ONSET["test"]))
-        test_results["detection"][summary["id"]] = metrics
-        explain = final_explain(summary, model)
-        payload = {"summary": {**summary, "test": metrics},
-                   "test": {**score_histograms(y_test, scores, faults_test),
-                            "delays": {"validation_threshold": {"threshold": threshold, "by_fault": delays}}}}
-        payload["coefficients" if summary["family"] in ("logreg", "baseline") else "importances"] = explain
-        write_json(WEB_DIR / "detection" / f"test_{summary['id']}.json", payload)
-        print(f"TEST {summary['label']:40s}", {k: round(v, 4) for k, v in metrics.items()})
+    chosen = [("detection", best_det), ("detection", next(s for s in det_summaries if s["family"] == "baseline")),
+              ("diagnosis", best_diag), ("diagnosis", next(s for s in diag_summaries if s["family"] == "baseline"))]
+    final_inputs = {}
+    for fs in {s.get("features", "inst") for _, s in chosen}:
+        raw_full = raw_inputs(full_df, fs)
+        sc = StandardScaler().fit(raw_full)
+        final_inputs[fs] = (sc.transform(raw_full).astype(np.float32), sc.transform(raw_inputs(test_df, fs)).astype(np.float32))
+        del raw_full
 
-    # ---- Diagnosis ----
-    rows = ((full_df["target"] == 1) & (full_df["sample"] % DIAG_STRIDE == 0)).to_numpy()
-    X_full = final_scaler.transform(full_df.loc[rows, FEATURES].to_numpy())
-    y_full = full_df.loc[rows, "faultNumber"].to_numpy()
-    for summary in (best_diag, next(s for s in diag_summaries if s["family"] == "baseline")):
-        model, classes = fit_final("diagnosis", summary, X_full, y_full)
-        pred = model.predict(X_test[test_post])
-        if summary["family"] == "xgb":
-            pred = classes[pred.astype(int)]
-        true = faults_test[test_post]
-        metrics, cm, recall = diagnosis_metrics(true, pred)
-        delays = delays_to_json(streak_delays(runs_test[test_post], true, samples_test[test_post],
-                                              pred == true, FAULT_ONSET["test"]))
-        test_results["diagnosis"][summary["id"]] = metrics
-        explain = final_explain(summary, model)
-        payload = {"summary": {**summary, "test": metrics},
-                   "test": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall, "delays": delays}}
-        payload["coefficients" if summary["family"] in ("logreg", "baseline") else "importances"] = explain
-        write_json(WEB_DIR / "diagnosis" / f"test_{summary['id']}.json", payload)
-        print(f"TEST {summary['label']:40s}", {k: round(v, 4) for k, v in metrics.items()})
+    for task, summary in chosen:
+        fs = summary.get("features", "inst")
+        X_all, X_test = final_inputs[fs]
+        if task == "detection":
+            rows = (full_df["sample"] % DET_STRIDE == 0).to_numpy()
+            X_fit, y_fit = X_all[rows], full_df.loc[rows, "target"].to_numpy()
+        else:
+            rows = ((full_df["target"] == 1) & (full_df["sample"] % DIAG_STRIDE == 0)).to_numpy()
+            X_fit, y_fit = X_all[rows], full_df.loc[rows, "faultNumber"].to_numpy()
+        X_normal = X_all[(full_df["faultNumber"] == 0).to_numpy()]
+        model = fit_final(task, summary, X_fit, y_fit, X_normal)
+        explain = final_explain(summary, model, INPUT_NAMES[fs])
+        key = "coefficients" if summary["family"] in ("logreg", "baseline", "pcalr") else "importances"
+        if task == "detection":
+            scores = final_scores(task, summary, model, X_test)
+            threshold = summary["val"]["threshold"]                    # chosen on validation
+            metrics = detection_metrics(y_test, scores, threshold)
+            by_fault, reference = delays_to_json(streak_delays(runs_test, faults_test, samples_test,
+                                                               scores >= threshold, FAULT_ONSET["test"]))
+            test_results["detection"][summary["id"]] = metrics
+            write_json(WEB_DIR / "detection" / f"test_{summary['id']}.json", {
+                "summary": {**summary, "test": metrics}, key: explain,
+                "test": {**score_histograms(y_test, scores, faults_test, [threshold]),
+                         "delays": {"validation_threshold": {"threshold": threshold, "by_fault": by_fault,
+                                                             "reference": reference}}}})
+        else:
+            pred = final_scores(task, summary, model, X_test[test_post])
+            true = faults_test[test_post]
+            metrics, cm, recall = diagnosis_metrics(true, pred)
+            by_fault, _ = delays_to_json(streak_delays(runs_test[test_post], true, samples_test[test_post],
+                                                       pred == true, FAULT_ONSET["test"]))
+            test_results["diagnosis"][summary["id"]] = metrics
+            write_json(WEB_DIR / "diagnosis" / f"test_{summary['id']}.json", {
+                "summary": {**summary, "test": metrics}, key: explain,
+                "test": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall, "delays": by_fault}})
+        print(f"TEST {summary['label']:45s}", {k: round(v, 4) for k, v in metrics.items() if not isinstance(v, int)})
 
     write_manifest(test_results)
     print("Manifest updated with test results.")
