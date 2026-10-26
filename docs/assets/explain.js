@@ -1,6 +1,6 @@
 // Explanations that depend on the selected model family: how the model turns readings into a score (Learn box)
 // and which sensors it relies on (bar chart). Shared by the Detection and Diagnosis pages.
-import { COLORS, VARIABLES, familyOf, num, pct, esc, sensorWeights, inputInfo } from "./site.js";
+import { COLORS, VARIABLES, familyOf, num, pct, esc, sensorWeights, inputInfo, windowText } from "./site.js";
 import { barChart } from "./charts.js";
 import * as M from "./math.js";
 
@@ -206,10 +206,12 @@ export function renderSensors({ chartEl, titleEl, introEl, file, model, faultInd
   const kind = w.kind === "importance" ? (w.method || "impurity") : w.kind;
   introEl.textContent = KIND_TEXT[kind] || KIND_TEXT.impurity;
   if (w.values.length > 52) {
-    // History models: how much of the weight sits on the 30-minute mean and std inputs.
+    // History models: how much of the weight sits on the rolling mean and std inputs.
     const mag = w.values.map(Math.abs), total = mag.reduce((a, b) => a + b, 0) || 1;
     const share = mag.slice(52).reduce((a, b) => a + b, 0) / total;
-    introEl.textContent += ` This model also sees each reading's 30-minute mean and standard deviation: ${pct(share, 0)} of its ${w.kind === "importance" ? "importance" : "total coefficient size"} sits on those history inputs.`;
+    const names = (file.coefficients || file.importances).features || [];
+    const win = /_mean(\d+)$/.exec(names[52] || "")?.[1];
+    introEl.textContent += ` This model also sees each reading's ${win ? windowText(+win) + " " : "rolling "}mean and standard deviation: ${pct(share, 0)} of its ${w.kind === "importance" ? "importance" : "total coefficient size"} sits on those history inputs.`;
   }
   const ranked = w.values.map((v, j) => [j, v]).filter(x => x[1] !== 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
   const top = ranked.slice(0, 15);

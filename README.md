@@ -33,7 +33,9 @@ One row is one 3-minute time step of one simulation run. The models use only the
   trained once per depth; smaller forests and fewer rounds are read off the same fit. PCA + logistic regression
   (number of components) and PCA process monitoring (Hotelling's T² and SPE, fitted on fault-free runs only).
 - **Temporal features (ablation):** selected families are also trained with a trailing 30-minute rolling mean and
-  standard deviation of every reading, computed within each run from past samples only.
+  standard deviation of every reading, computed within each run from past samples only. A window sweep then
+  retrains the best 30-minute settings of each of these families with 6-minute, 15-minute, 1-hour and 2-hour
+  windows, to show how much history helps and how much later longer windows react.
 - **Uncertainty:** 95% intervals from a run-level bootstrap (whole validation runs resampled within each fault type).
 - **Thresholds and model choice:** each detection model's threshold is set so 5% of normal validation rows raise
   an alarm; the best model catches the most faults at that point. The best diagnosis model has the highest
@@ -56,6 +58,7 @@ pip install -r requirements.txt
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100      # subset, faster
 python tep_pipeline.py --data-dir path/to/csvs --families tree,rf          # only some model families
 python tep_pipeline.py --data-dir path/to/csvs --history-families ""     # no history inputs
+python tep_pipeline.py --data-dir path/to/csvs --hist-windows ""         # skip the history window sweep
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0        # all 500 runs per fault
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test
 ```

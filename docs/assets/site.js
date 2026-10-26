@@ -210,9 +210,17 @@ export function inputInfo(name) {
   if (!m) return { code: name, desc: name };
   const base = VARIABLES[m[1]] || m[1];
   if (!m[2]) return { code: name, desc: base };
-  const minutes = +m[3] * 3;
-  return { code: name, desc: `${base} (${minutes}-min ${m[2] === "mean" ? "mean" : "std. dev."})`, history: true };
+  return { code: name, desc: `${base} (${windowText(+m[3])} ${m[2] === "mean" ? "mean" : "std. dev."})`, history: true };
 }
+// Input sets: "inst" (52 readings), "hist" (plus 30-minute history) or "hist{w}" (history over w samples).
+export const isHist = fs => (fs || "inst").startsWith("hist");
+export const windowOf = fs => (!isHist(fs) ? 0 : fs === "hist" ? 10 : +fs.slice(4));
+export const fsForWindow = w => (w === 0 ? "inst" : w === 10 ? "hist" : `hist${w}`);
+export function windowText(w) {
+  const m = w * 3;
+  return m < 60 ? `${m}-min` : `${+(m / 60).toFixed(1)}-hour`;
+}
+export const windowShort = w => { const m = w * 3; return m < 60 ? `${m} min` : `${+(m / 60).toFixed(1)} h`; };
 // Lower-case a model name for use mid-sentence, but keep names like XGBoost, AdaBoost and PCA as they are.
 export const lowerLabel = l => (/[A-Z]/.test(l.slice(1)) ? l : l.charAt(0).toLowerCase() + l.slice(1));
 export const INPUT_SETS = { inst: "Instantaneous", hist: "With 30-min history" };
@@ -220,7 +228,7 @@ export const INPUT_SETS = { inst: "Instantaneous", hist: "With 30-min history" }
 // ---------- Models ----------
 // A selection is { family, features, ...settings }. Logistic regression uses { penalty, weighting, C }; other
 // families use the parameters listed for them in the manifest (e.g. { depth, trees } or { stat, k }).
-// features is "inst" (52 readings) or "hist" (readings plus 30-minute history).
+// features is "inst" (52 readings), "hist" (readings plus 30-minute history) or "hist{w}" (another window).
 const sameC = (a, b) => (a == null && b == null) || (a != null && b != null && Math.abs(Math.log10(a) - Math.log10(b)) < 1e-6);
 export const familyOf = m => m.family || (m.penalty === "baseline" ? "baseline" : "logreg");
 export const familyInfo = (manifest, key) => manifest.families.find(f => f.key === key) || { key, label: FAMILY_LABELS[key] || key, params: [] };
@@ -259,7 +267,8 @@ export function readSelection(manifest, task) {
   const q = new URLSearchParams(location.search);
   let sel;
   const fam = q.get("family") || (q.get("penalty") === "baseline" ? "baseline" : q.get("penalty") ? "logreg" : null);
-  const features = q.get("hist") === "1" ? "hist" : "inst";
+  const h = q.get("hist");
+  const features = !h ? "inst" : h === "1" ? "hist" : fsForWindow(+h);
   if (fam === "baseline") sel = { family: "baseline" };
   else if (fam === "logreg") {
     const penalty = q.get("penalty") || "none";
@@ -285,7 +294,7 @@ function selectionParams(sel) {
     q.set("family", sel.family);
     for (const [k, v] of Object.entries(sel)) if (!["family", "features"].includes(k) && v != null) q.set(k, v);
   }
-  if (sel.features === "hist") q.set("hist", "1");
+  if (isHist(sel.features)) q.set("hist", sel.features === "hist" ? "1" : windowOf(sel.features));
   return q;
 }
 export function writeSelection(sel, extra = {}) {
@@ -300,7 +309,7 @@ export function modelLink(page, model) {
 export function settingsText(model) {
   const fam = familyOf(model), p = model.params || {};
   if (fam === "baseline") return "–";
-  const hist = model.features === "hist" ? "30-min history" : null;
+  const hist = isHist(model.features) ? `${windowText(windowOf(model.features))} history` : null;
   if (fam === "logreg") {
     const pen = { none: "no penalty", l1: "lasso", l2: "ridge" }[model.penalty];
     return [pen, model.class_weight === "balanced" ? "balanced" : null, model.C != null ? `C = ${fmtC(model.C)}` : null, hist].filter(Boolean).join(", ");
@@ -317,7 +326,10 @@ export function modelBar(container, opts) {
   const { task, manifest } = opts;
   const grid = manifest.settings.C_grid;
   const families = manifest.families.filter(f => (!f.tasks || f.tasks.includes(task)) && manifest[task].models.some(m => familyOf(m) === f.key));
-  const hasHistory = fam => manifest[task].models.some(m => familyOf(m) === fam && m.features === "hist");
+  const hasHistory = fam => manifest[task].models.some(m => familyOf(m) === fam && isHist(m.features));
+  // History windows trained for a family (the full grid uses 30 minutes; other windows only the best settings).
+  const windowsFor = fam => [...new Set(manifest[task].models.filter(m => familyOf(m) === fam && isHist(m.features))
+    .map(m => windowOf(m.features)))].sort((a, b) => a - b);
   let sel = { ...opts.selection };
   // Settings to return to when switching back to a family: start each family at its best model.
   const last = new Map(families.map(f => [f.key, selectionOf(bestModel(manifest, task, f.key) || manifest[task].models.find(m => familyOf(m) === f.key))]));
@@ -338,8 +350,13 @@ export function modelBar(container, opts) {
 
   function renderControls() {
     const fam = sel.family;
+    const wins = fam !== "baseline" ? windowsFor(fam) : [];
     const inputs = fam !== "baseline" && hasHistory(fam) ? `<div class="control"><div class="control-head">Inputs</div>
-      <div class="seg" data-k="features"><button type="button" data-v="inst">Instantaneous</button><button type="button" data-v="hist">+ 30-min history</button></div></div>` : "";
+      <div class="seg" data-k="features"><button type="button" data-v="inst">Instantaneous</button><button type="button" data-v="hist">+ history</button></div></div>
+      ${wins.length > 1 ? `<div class="control grow" data-k="window-wrap"><div class="control-head"><span>History window
+        <span class="note" data-k="window-note"></span></span><span class="val" data-k="wval"></span></div>
+        <input type="range" min="0" max="${wins.length - 1}" step="1" data-k="window" aria-label="History window">
+        <div class="ticks">${wins.map(w => `<span>${windowShort(w)}</span>`).join("")}</div></div>` : ""}` : "";
     renderFamilyControls(fam);
     controls.insertAdjacentHTML("afterbegin", inputs);
   }
@@ -369,12 +386,21 @@ export function modelBar(container, opts) {
     const model = findModel(manifest, task, sel);
     q("family").value = sel.family;
     // Inputs switch: disable an option when no model with these settings was trained on it.
+    const cur = isHist(sel.features) ? "hist" : "inst";
     q("features")?.querySelectorAll("button").forEach(b => {
-      b.classList.toggle("on", b.dataset.v === (sel.features || "inst"));
-      b.setAttribute("aria-pressed", b.dataset.v === (sel.features || "inst"));
-      b.disabled = b.dataset.v !== (sel.features || "inst") && !findModel(manifest, task, { ...sel, features: b.dataset.v });
+      b.classList.toggle("on", b.dataset.v === cur);
+      b.setAttribute("aria-pressed", b.dataset.v === cur);
+      b.disabled = b.dataset.v !== cur && !findModel(manifest, task, { ...sel, features: b.dataset.v });
       b.title = b.disabled ? "Not trained with these settings" : "";
     });
+    const ww = q("window-wrap");
+    if (ww) {
+      const wins = windowsFor(sel.family), w = windowOf(sel.features);
+      ww.hidden = !isHist(sel.features);
+      q("window").value = Math.max(0, wins.indexOf(w));
+      q("wval").textContent = isHist(sel.features) ? windowShort(w) : "";
+      q("window-note").textContent = w === 10 ? "" : "(other windows: best 30-min settings only)";
+    }
     if (sel.family === "logreg") {
       for (const k of ["weighting", "penalty"]) {
         q(k)?.querySelectorAll("button").forEach(b => {
@@ -411,8 +437,10 @@ export function modelBar(container, opts) {
   }
   function changed(rebuild = false) {
     if (rebuild) renderControls();
+    // Windows other than 30 minutes exist only for one setting: changing another setting returns to 30 minutes.
+    if (isHist(sel.features) && sel.features !== "hist" && !findModel(manifest, task, sel)) sel.features = "hist";
     // A setting that only exists without history (e.g. lasso) switches the inputs back to instantaneous.
-    if (sel.features === "hist" && !findModel(manifest, task, sel) && findModel(manifest, task, { ...sel, features: "inst" })) sel.features = "inst";
+    if (isHist(sel.features) && !findModel(manifest, task, sel) && findModel(manifest, task, { ...sel, features: "inst" })) sel.features = "inst";
     last.set(sel.family, { ...sel });
     const model = sync();
     if (model) opts.onChange(sel, model);
@@ -438,6 +466,16 @@ export function modelBar(container, opts) {
   container.addEventListener("input", e => {
     const t = e.target;
     if (t.dataset.k === "C") { sel.C = grid[+t.value]; changed(); }
+    else if (t.dataset.k === "window") {
+      const w = windowsFor(sel.family)[+t.value], fs = fsForWindow(w);
+      if (findModel(manifest, task, { ...sel, features: fs })) sel = { ...sel, features: fs };
+      else {
+        // Jump to the settings that were trained with this window.
+        const m = manifest[task].models.find(x => familyOf(x) === sel.family && (x.features || "inst") === fs);
+        if (m) sel = selectionOf(m);
+      }
+      changed();
+    }
     else if (t.dataset.param) {
       const p = familyInfo(manifest, sel.family).params.find(x => x.key === t.dataset.param);
       sel[p.key] = p.values[+t.value];

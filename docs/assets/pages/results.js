@@ -1,7 +1,7 @@
 import {
   renderChrome, showError, loadManifest, loadModel, loadTestModel, bestModel, dataNote, detectionView, findModel as findAny,
   familyOf, familyLabel, modelLink, COLORS, pct, num, int, tile, esc,
-  metricsAtFar, loadAllDetection, farControl, OFFICIAL_FAR,
+  metricsAtFar, loadAllDetection, farControl, OFFICIAL_FAR, isHist, windowText, windowOf,
 } from "../site.js";
 import { barChart, legend } from "../charts.js";
 
@@ -41,7 +41,7 @@ function renderFindings(manifest) {
       // Like-for-like: best non-linear vs best logistic regression, with the same inputs.
       const all = manifest.detection.models, allD = manifest.diagnosis.models;
       const pick = (ms, fs, lin, key) => {
-        const c = ms.filter(m => (m.features || "inst") === fs && familyOf(m) !== "baseline" && (familyOf(m) === "logreg") === lin);
+        const c = ms.filter(m => (fs === "hist" ? isHist(m.features) : (m.features || "inst") === fs) && familyOf(m) !== "baseline" && (familyOf(m) === "logreg") === lin);
         return c.length ? c.reduce((a, b) => (key(b) > key(a) ? b : a)) : null;
       };
       const rec = m => m.val.recall, f1 = m => m.val.macro_F1;
@@ -52,7 +52,7 @@ function renderFindings(manifest) {
       let t = `<b>Non-linear models beat logistic regression on single snapshots.</b> At 5% false alarms the best of them,
         ${esc(nlI.label)}, catches ${pct(rec(nlI))} of faulty rows against ${pct(rec(lrI))} for the best logistic regression.`;
       if (dI[0] && dI[1]) t += ` For diagnosis: macro-F1 ${num(f1(dI[0]), 3)} against ${num(f1(dI[1]), 3)}.`;
-      if (nlH && lrH) t += ` With 30 minutes of history the gap shrinks to ${pct(rec(nlH))} against ${pct(rec(lrH))}: much of what the
+      if (nlH && lrH) t += ` With history inputs the gap shrinks to ${pct(rec(nlH))} against ${pct(rec(lrH))}: much of what the
         trees gain from non-linear splits, a linear model can get from rolling means and standard deviations.`;
       return t;
     })(),
@@ -60,9 +60,9 @@ function renderFindings(manifest) {
       const pm = bestModel(manifest, "detection", "pcamon");
       if (!pm || !lrDet) return "";
       const lrInst = det.filter(m => familyOf(m) === "logreg").reduce((x, y) => (y.val.recall > x.val.recall ? y : x));
-      return `<b>The label-free textbook method is a strong baseline.</b> PCA monitoring (${esc(pm.label)}) never sees a fault label,
-        yet catches ${pct(pm.val.recall)} of faulty rows at 5% false alarms, ${pm.val.recall > lrInst.val.recall ? "more than" : "against"}
-        ${pct(lrInst.val.recall)} for the best logistic regression on the same snapshots. Supervised non-linear models still do better
+      return `<b>${pm.val.recall > lrInst.val.recall ? "The label-free textbook method is a strong baseline." : "The label-free textbook method trails the supervised models."}</b> PCA monitoring (${esc(pm.label)}) never sees a fault label,
+        yet catches ${pct(pm.val.recall)} of faulty rows at 5% false alarms, ${pm.val.recall > lrInst.val.recall ? "more than the" : "against"}
+        ${pct(lrInst.val.recall)} ${pm.val.recall > lrInst.val.recall ? "" : "for the"} best logistic regression on the same snapshots. Supervised non-linear models do better
         because they learn what each fault looks like. See <a href="${modelLink("detection.html", pm)}">PCA monitoring</a>.`;
     })(),
     `<b>Accuracy and F1 are misleading here.</b> The majority baseline scores F1 ${num(base.val.F1, 3)} by alarming on every row,
@@ -87,17 +87,30 @@ function renderFindings(manifest) {
      ${num(bestD.val.macro_F1, 3)} against ${num(dia.find(m => m.penalty === "baseline").val.macro_F1, 3)} for the baseline;
      some faults are named almost perfectly while others are barely above chance. See <a href="diagnosis.html">Diagnosis</a>.`,
     (() => {
-      const all = manifest.detection.models, h = all.filter(m => m.features === "hist");
+      const all = manifest.detection.models, h = all.filter(m => isHist(m.features));
       if (!h.length) return "";
       const bi = all.filter(m => inst(m) && familyOf(m) !== "baseline").reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
       const bh = h.reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
       const d = bh.val.recall - bi.val.recall;
       return d > 0.005
-        ? `<b>Thirty minutes of history helps.</b> Adding rolling means and standard deviations lifts the best detection model from
+        ? `<b>Recent history helps.</b> Adding rolling means and standard deviations lifts the best detection model from
            ${pct(bi.val.recall)} (${esc(bi.label)}) to ${pct(bh.val.recall)} (${esc(bh.label)}) at 5% false alarms: drifts and changes in
            variability that a single snapshot can't show become visible. See <a href="detection.html#sensors">Detection</a>.`
-        : `<b>History inputs don't help detection here.</b> The best model with 30-minute rolling statistics reaches ${pct(bh.val.recall)}
+        : `<b>History inputs don't help detection here.</b> The best model with rolling statistics reaches ${pct(bh.val.recall)}
            against ${pct(bi.val.recall)} from single snapshots.`;
+    })(),
+    (() => {
+      // Window sweep: which window wins for each family, and does the longest window lose ground?
+      const sweeps = manifest.detection.models.filter(m => m.sweep_of);
+      if (!sweeps.length) return "";
+      const fams = [...new Set(sweeps.map(familyOf))];
+      const parts = fams.map(f => {
+        const chain = manifest.detection.models.filter(m => familyOf(m) === f && (m.sweep_of || m.id === sweeps.find(x => familyOf(x) === f).sweep_of));
+        const b = chain.reduce((a, c) => (c.val.recall > a.val.recall ? c : a));
+        return `${esc(familyLabel(manifest, f))}: ${windowText(windowOf(b.features))} (${pct(b.val.recall)})`;
+      });
+      return `<b>The best amount of history depends on the model.</b> Best window at 5% false alarms — ${parts.join("; ")}.
+        Longer windows catch slow, subtle faults better but react later to sudden ones. See <a href="detection.html#window">How much history helps</a>.`;
     })(),
     `<b>Detection speed varies enormously by fault:</b> from minutes for sudden faults to many hours, or never, for subtle ones.
      See <a href="detection.html#speed">Detection</a>.`,

@@ -99,6 +99,8 @@ parser.add_argument("--selection-far", type=float, default=0.05,
                     help="false-alarm rate on validation normal rows used to set thresholds and pick the best model")
 parser.add_argument("--test-runs-per-fault", type=int, default=100,
                     help="faulty test runs used per fault (the full faulty test file is ~10M rows)")
+parser.add_argument("--hist-windows", default="2,5,20,40",
+                    help="extra history windows (in 3-minute samples) for the window sweep; '' to skip it")
 parser.add_argument("--final-test", action="store_true", help="retrain the chosen models and evaluate on test")
 parser.add_argument("--force-retrain", action="store_true",
                     help="retrain the families listed in --families even if already exported (others are kept as they are)")
@@ -158,11 +160,16 @@ GB_L2 = 1.0
 PCA_COMPONENTS = [2, 5, 10, 15, 20, 30, 40]       # PCA + logistic regression
 PCAMON_COMPONENTS = [5, 10, 15, 20, 25, 30]       # PCA monitoring
 PCAMON_ALPHA = 0.01                               # classical control limits are computed at 99% for comparison
-HIST_WINDOW = 10                                  # 10 samples = 30 minutes of history
+HIST_WINDOW = 10                                  # 10 samples = 30 minutes of history (full grid)
+# Window sweep: the best 30-minute settings of each history family are retrained with these other windows
+# (2, 5, 20, 40 samples = 6 min, 15 min, 1 h, 2 h), so the website can show how much history helps.
 HIST_LR_PENALTIES = ["none", "l2"]                # lasso is slow on 156 inputs, so history LR uses none/ridge
 HIST_XGB_DEPTHS = [4, 8]                          # XGBoost with history: fewer depths to keep run time down
 BOOTSTRAP = 200                                   # run-level bootstrap resamples for 95% intervals
 EXPORT_VERSION = 3                                # bump when the exported files gain new content
+
+SWEEP_WINDOWS = [int(w) for w in args.hist_windows.split(",") if w.strip()] if args.hist_windows else []
+SWEEP_WINDOWS = [w for w in SWEEP_WINDOWS if w != HIST_WINDOW]
 
 FAMILIES = [f.strip() for f in args.families.split(",") if f.strip()]
 HISTORY = [f.strip() for f in args.history_families.split(",") if f.strip()]
@@ -272,26 +279,45 @@ y_diag = train_df.loc[diag_rows, "faultNumber"].to_numpy()
 # (the current sample included, nothing after it), so a prediction only uses information available at that time.
 # Scalers are fitted on training runs only.
 
-HIST_NAMES = [f"{f}_mean{HIST_WINDOW}" for f in FEATURES] + [f"{f}_std{HIST_WINDOW}" for f in FEATURES]
-INPUT_NAMES = {"inst": FEATURES, "hist": FEATURES + HIST_NAMES}
+# Input sets: "inst" (the 52 readings), "hist" (plus a 30-minute history, the full grid) and "hist{w}" for the
+# window sweep (e.g. "hist40" = 2 hours).
+
+def window_of(fs):
+    return None if fs == "inst" else HIST_WINDOW if fs == "hist" else int(fs[4:])
 
 
-def history_block(df):
+def fs_for_window(w):
+    return "hist" if w == HIST_WINDOW else f"hist{w}"
+
+
+def input_names(fs):
+    w = window_of(fs)
+    return FEATURES if w is None else FEATURES + [f"{f}_mean{w}" for f in FEATURES] + [f"{f}_std{w}" for f in FEATURES]
+
+
+INPUT_NAMES = {fs: input_names(fs) for fs in ["inst", "hist"] + [fs_for_window(w) for w in SWEEP_WINDOWS]}
+
+
+def window_text(w):
+    m = w * SAMPLE_MINUTES
+    return f"{m}-min" if m < 60 else f"{m // 60}-hour" if m % 60 == 0 else f"{m / 60:g}-hour"
+
+
+def history_block(df, window):
     """Trailing rolling mean and std of every reading, per run. df must be sorted by run and sample."""
     g = df.groupby("run_id", sort=False)[FEATURES]
-    mean = g.rolling(HIST_WINDOW, min_periods=1).mean().reset_index(level=0, drop=True).sort_index()
-    std = g.rolling(HIST_WINDOW, min_periods=2).std().reset_index(level=0, drop=True).sort_index().fillna(0.0)
+    mean = g.rolling(window, min_periods=1).mean().reset_index(level=0, drop=True).sort_index()
+    std = g.rolling(window, min_periods=2).std().reset_index(level=0, drop=True).sort_index().fillna(0.0)
     return mean.to_numpy(np.float32), std.to_numpy(np.float32)
 
 
 def raw_inputs(df, fs):
     x = df[FEATURES].to_numpy(np.float32)
-    return x if fs == "inst" else np.hstack([x, *history_block(df)])
+    return x if fs == "inst" else np.hstack([x, *history_block(df, window_of(fs))])
 
 
-FEATURE_SETS = ["inst"] + (["hist"] if HISTORY else [])
-scalers, X_train, X_val = {}, {}, {}
-for fs in FEATURE_SETS:
+def build_inputs(fs):
+    """Standardized training (kept rows only) and validation inputs for one input set; scaler fitted on training."""
     t0 = time.time()
     raw = raw_inputs(train_df, fs)
     scalers[fs] = StandardScaler().fit(raw)
@@ -299,6 +325,12 @@ for fs in FEATURE_SETS:
     del raw
     X_val[fs] = scalers[fs].transform(raw_inputs(val_df, fs)).astype(np.float32)
     print(f"Inputs '{fs}': {X_train[fs].shape[1]} columns ({time.time() - t0:.0f}s)", flush=True)
+
+
+FEATURE_SETS = ["inst"] + (["hist"] if HISTORY else [])
+scalers, X_train, X_val = {}, {}, {}
+for fs in FEATURE_SETS:
+    build_inputs(fs)
 det_in_keep, diag_in_keep = det_rows[keep_rows], diag_rows[keep_rows]
 normal_in_keep = (train_df.loc[keep_rows, "faultNumber"] == 0).to_numpy()   # fault-free training runs (PCA monitoring)
 
@@ -352,8 +384,8 @@ if "logreg" in FAMILIES:
     print("scikit-learn API:", "new (l1_ratio)" if NEW_LR_API else "old (penalty=)", "- lasso check passed")
 
 PENALTY_NAMES = {"none": "No penalty", "l1": "Lasso (L1)", "l2": "Ridge (L2)", "baseline": "Majority class"}
-HIST_TAG = {"inst": "", "hist": "_hist"}
-HIST_LABEL = {"inst": "", "hist": ", 30-min history"}
+HIST_TAG = {fs: "" if fs == "inst" else "_" + fs for fs in INPUT_NAMES}                    # e.g. "_hist", "_hist40"
+HIST_LABEL = {fs: "" if fs == "inst" else f", {window_text(window_of(fs))} history" for fs in INPUT_NAMES}
 
 
 def model_id(task, penalty, C=None, class_weight=None, fs="inst"):
@@ -982,6 +1014,130 @@ def summary_table(summaries, metric_keys):
 
 
 det_summaries = run_task("detection")
+diag_summaries = run_task("diagnosis")
+
+# ### History window sweep
+# The best 30-minute settings of each history family (chosen on validation, as everywhere else) are retrained
+# with the other windows. One window's inputs are built at a time and freed afterwards to keep memory down.
+
+def fit_with_params(task, family, params, X, y):
+    """A single model with exactly these settings."""
+    if family == "logreg":
+        cw = None if params.get("class_weight", "none") == "none" else params["class_weight"]
+        return make_lr(params["penalty"], params["C"], cw, multiclass=(task == "diagnosis")).fit(X, y)
+    if family == "pcalr":
+        return fit_pcalr(task, params["k"], X, y)
+    model = build_tree_model(task, family, params)
+    if family == "ada":
+        X, y = subsample(X, y, ADA_SAMPLE)
+    if family == "xgb":
+        model.fit(X, np.searchsorted(np.unique(y), y))
+        model.tep_classes_ = np.unique(y)
+    else:
+        model.fit(X, y)
+    return model
+
+
+def sweep_jobs():
+    jobs = []
+    for task, summaries, key in (("detection", det_summaries, "recall"), ("diagnosis", diag_summaries, "macro_F1")):
+        for family in HISTORY:
+            cands = [s for s in summaries if s["family"] == family and s.get("features") == "hist"]
+            if not cands:
+                continue
+            best = max(cands, key=lambda s: s["val"][key])
+            for w in SWEEP_WINDOWS:
+                fs = fs_for_window(w)
+                p = best["params"]
+                if family == "logreg":
+                    mid = model_id(task, p["penalty"], p["C"], None if p.get("class_weight", "none") == "none"
+                                   else p["class_weight"], fs)
+                    label = model_label(p["penalty"], p["C"], p.get("class_weight") if p.get("class_weight") != "none" else None, fs)
+                else:
+                    mid, label = unit_id(task, family, p, fs), unit_label(family, p, fs)
+                jobs.append({"task": task, "family": family, "params": p, "fs": fs, "id": mid, "label": label, "base": best})
+    return jobs
+
+
+def final_scores(task, summary, model, X):
+    family, p = summary["family"], summary["params"]
+    if family == "pcamon":
+        t2, spe = pca_monitor_scores(model, X, p["k"])
+        return t2 if p["stat"] == "T2" else spe
+    if family == "pcalr":
+        proba = model["lr"].predict_proba(model["pca"].transform(X))
+        classes = model["lr"].classes_
+    else:
+        proba = model.predict_proba(X)
+        classes = getattr(model, "tep_classes_", getattr(model, "classes_", None))
+    return task_output(task, proba, classes)
+
+
+def final_explain(summary, model, names):
+    family = summary["family"]
+    if family in ("logreg", "baseline"):
+        return coefficients(model, names)
+    if family == "pcalr":
+        coef = model["lr"].coef_ @ model["pca"].components_
+        return {"features": FEATURES, "values": coef[0] if coef.shape[0] == 1 else coef, "nonzero": len(FEATURES)}
+    if family in ("tree", "rf", "ada") or family == "xgb":
+        if family == "xgb":
+            gain = model.get_booster().get_score(importance_type="gain")
+            return importances([gain.get(f"f{j}", 0.0) for j in range(len(names))], "gain", names)
+        return importances(model.feature_importances_, "impurity", names)
+    return None
+
+
+def run_sweep():
+    jobs = sweep_jobs()
+    if not jobs:
+        return
+    print(f"\nHistory window sweep: {len(jobs)} models", flush=True)
+    for w in SWEEP_WINDOWS:
+        fs = fs_for_window(w)
+        todo = []
+        for j in (j for j in jobs if j["fs"] == fs):
+            old = existing_summary(j["task"], j["id"])
+            if up_to_date(old) and not forced(j["family"]):
+                (det_summaries if j["task"] == "detection" else diag_summaries).append(old)
+            else:
+                todo.append((j, old))
+        if not todo:
+            continue
+        build_inputs(fs)
+        for j, old in todo:
+            task, family, p = j["task"], j["family"], j["params"]
+            X, y, Xv = task_data(task, fs)
+            path = MODEL_DIR / f"{j['id']}.joblib"
+            if path.exists() and not forced(family) and old is not None:
+                model, secs = joblib.load(path), old.get("fit_seconds", 0.0)
+            elif family in FAMILIES:
+                t0 = time.time()
+                model = fit_with_params(task, family, p, X, y)
+                secs = time.time() - t0
+                joblib.dump(model, path)
+            else:
+                if old is not None:
+                    (det_summaries if task == "detection" else diag_summaries).append(old)
+                continue
+            explain = final_explain({"family": family}, model, INPUT_NAMES[fs])
+            extra = {"sweep_of": j["base"]["id"], "hist_window": w}
+            if family == "logreg":
+                extra.update({"penalty": p["penalty"], "C": p["C"],
+                              **({"class_weight": p.get("class_weight", "none")} if task == "detection" else {})})
+            if task == "detection":
+                s = export_detection(j["id"], j["label"], family, p, final_scores(task, {"family": family, "params": p}, model, Xv),
+                                     secs, explain, fs, extra=extra)
+                det_summaries.append(describe(s))
+            else:
+                s = export_diagnosis(j["id"], j["label"], family, p, final_scores(task, {"family": family, "params": p}, model, Xv),
+                                     secs, explain, fs, extra=extra)
+                diag_summaries.append(describe(s))
+        for d in (X_train, X_val, scalers):
+            d.pop(fs, None)
+
+run_sweep()
+
 det_table = summary_table(det_summaries, ["recall", "precision", "F1", "ROC_AUC", "normal_recall"])
 
 # ### Choosing the best detection model
@@ -995,7 +1151,6 @@ grp = candidates.groupby(["family", "inputs"])["recall"].idxmax()
 print(candidates.loc[grp].sort_values("recall", ascending=False).round(4))
 print("Best detection model:", best_det["label"])
 
-diag_summaries = run_task("diagnosis")
 diag_table = summary_table(diag_summaries, ["macro_F1", "accuracy"])
 diag_candidates = diag_table[diag_table["family"] != "baseline"]
 best_diag_id = diag_candidates["macro_F1"].idxmax()
@@ -1060,7 +1215,7 @@ def write_manifest(test_results=None):
                      "selection_far": SELECTION_FAR, "far_levels": FAR_LEVELS, "consecutive": CONSECUTIVE,
                      "det_stride": DET_STRIDE, "diag_stride": DIAG_STRIDE, "rf_sample": RF_SAMPLE,
                      "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2,
-                     "hist_window": HIST_WINDOW, "bootstrap": BOOTSTRAP, "pcamon_alpha": PCAMON_ALPHA,
+                     "hist_window": HIST_WINDOW, "hist_windows": sorted([HIST_WINDOW] + SWEEP_WINDOWS), "bootstrap": BOOTSTRAP, "pcamon_alpha": PCAMON_ALPHA,
                      "export_version": EXPORT_VERSION, "inputs": {k: len(v) for k, v in INPUT_NAMES.items()},
                      "trace_runs": TRACE_RUNS},
         "families": [{"key": f, **FAMILY_INFO[f]} for f in present],
@@ -1110,35 +1265,6 @@ def fit_final(task, summary, X, y, X_normal=None):
             model.fit(X, y)
     joblib.dump(model, MODEL_DIR / f"final_{summary['id']}.joblib")
     return model
-
-
-def final_scores(task, summary, model, X):
-    family, p = summary["family"], summary["params"]
-    if family == "pcamon":
-        t2, spe = pca_monitor_scores(model, X, p["k"])
-        return t2 if p["stat"] == "T2" else spe
-    if family == "pcalr":
-        proba = model["lr"].predict_proba(model["pca"].transform(X))
-        classes = model["lr"].classes_
-    else:
-        proba = model.predict_proba(X)
-        classes = getattr(model, "tep_classes_", getattr(model, "classes_", None))
-    return task_output(task, proba, classes)
-
-
-def final_explain(summary, model, names):
-    family = summary["family"]
-    if family in ("logreg", "baseline"):
-        return coefficients(model, names)
-    if family == "pcalr":
-        coef = model["lr"].coef_ @ model["pca"].components_
-        return {"features": FEATURES, "values": coef[0] if coef.shape[0] == 1 else coef, "nonzero": len(FEATURES)}
-    if family in ("tree", "rf", "ada") or family == "xgb":
-        if family == "xgb":
-            gain = model.get_booster().get_score(importance_type="gain")
-            return importances([gain.get(f"f{j}", 0.0) for j in range(len(names))], "gain", names)
-        return importances(model.feature_importances_, "impurity", names)
-    return None
 
 
 if args.final_test:

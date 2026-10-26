@@ -69,6 +69,30 @@
     <div class="plot"><div class="plot-title" id="sensors-title"></div><div id="chart-sensors"></div></div>
   </section>
 
+  <section class="section" id="window" data-toc="How much history">
+    <h2>How much history helps?</h2>
+    <p class="intro">Each line is one model, kept at its best 30-minute settings, retrained with a different amount of history:
+      from a single snapshot ("none") up to 2 hours. Click a point to open that model.</p>
+    <div class="plot"><div id="legend-window"></div><div id="chart-window"></div></div>
+    <p class="callout" id="callout-window"></p>
+    <h3>The price: reacting later</h3>
+    <div class="plot"><div id="legend-window2"></div><div id="chart-window2"></div></div>
+    <p class="note" id="window-speed-note"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Why a longer window is not always better</summary>
+      <div class="learn-body">
+        <p>A rolling mean over <i>W</i> samples averages away noise: its standard deviation shrinks roughly like 1/√<i>W</i>, so a small,
+          steady shift that is invisible in one noisy reading stands out in the average. A rolling standard deviation needs several
+          samples before it can tell that a sensor has become more variable. Both argue for longer windows.</p>
+        <p>But the window looks back in time. Right after a fault starts, a 2-hour window still holds about 40 pre-fault samples and only
+          a few faulty ones, so the average barely moves yet. Long windows are therefore more sensitive to slow, subtle faults but react
+          later to sudden ones, and some of their gain is offset by that delay. Picking <i>W</i> is a bias–variance trade-off over time:
+          short windows are noisy (high variance), long windows lag (bias).</p>
+        <p>Choosing the window is model selection like any other setting, so it is done on the validation runs; the test set is not used.</p>
+      </div>
+    </details>
+  </section>
+
   <section class="section" id="speed" data-toc="How quickly">
     <h2>How quickly is the right fault named?</h2>
     <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model names the correct fault

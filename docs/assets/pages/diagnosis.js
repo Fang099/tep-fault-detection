@@ -5,6 +5,7 @@ import {
 import { barChart, heatmap } from "../charts.js";
 import { explainer, renderSensors } from "../explain.js";
 import * as M from "../math.js";
+import { renderWindowSweep } from "../window.js";
 
 renderChrome();
 
@@ -19,7 +20,7 @@ async function main() {
   renderStaticFormulas();
   const q = new URLSearchParams(location.search);
   if (q.get("fault")) state.row = +q.get("fault") - 1;
-  modelBar($("modelbar"), {
+  state.bar = modelBar($("modelbar"), {
     task: "diagnosis", manifest, selection: readSelection(manifest, "diagnosis"),
     onChange: (sel, model) => selectModel(sel, model).catch(showError),
   });
@@ -43,6 +44,7 @@ function render() {
   renderMatrix();
   renderRecall();
   renderSpeed();
+  renderWindow();
 }
 
 function selectRow(r) {
@@ -192,4 +194,13 @@ function renderSpeed() {
     tile("Named in every run", `${all} / ${faults.length}`, "fault types"),
     tile("Median over faults", finite.length ? fmtMinutes(finite[Math.floor(finite.length / 2)]) : "–"),
   ].join("");
+}
+
+function renderWindow() {
+  renderWindowSweep({
+    task: "diagnosis", manifest: state.manifest, model: state.model,
+    els: { section: $("window"), legend: $("legend-window"), chart: $("chart-window"), legend2: $("legend-window2"),
+           chart2: $("chart-window2"), speedNote: $("window-speed-note"), callout: $("callout-window") },
+    onPick: m => state.bar.set(selectionOf(m)),
+  }).catch(showError);
 }

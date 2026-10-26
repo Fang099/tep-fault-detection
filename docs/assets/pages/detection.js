@@ -1,10 +1,11 @@
 import {
-  renderChrome, showError, loadManifest, loadModel, getJSON, dataNote, modelBar, readSelection, writeSelection, findModel, familyOf,
+  renderChrome, showError, loadManifest, loadModel, getJSON, dataNote, modelBar, readSelection, writeSelection, findModel, familyOf, selectionOf, isHist, windowOf, windowText,
   detectionView, logit, PROB_TICKS, COLORS, bestModel, familyLabel, modelLink, lowerLabel, FAULTS, faultDesc, pct, num, int, fmtMinutes, fmtC, tile, esc,
 } from "../site.js";
 import { explainer, renderSensors, historyFormula } from "../explain.js";
 import { lineChart, barChart, legend } from "../charts.js";
 import * as M from "../math.js";
+import { renderWindowSweep } from "../window.js";
 
 renderChrome();
 
@@ -57,7 +58,7 @@ async function main() {
     renderChance();
   });
 
-  modelBar($("modelbar"), {
+  state.bar = modelBar($("modelbar"), {
     task: "detection", manifest, selection: readSelection(manifest, "detection"),
     onChange: (sel, model) => selectModel(sel, model).catch(showError),
   });
@@ -88,6 +89,7 @@ function renderAll() {
   renderThresholdDependent();
   renderSensors({ chartEl: $("chart-sensors"), titleEl: $("sensors-title"), introEl: $("sensors-intro"), file: state.file, model: state.model });
   renderHistoryLive();
+  renderWindow();
   renderSpeed();
   renderWeighting();
   renderAucLive();
@@ -248,7 +250,7 @@ function renderHistoryLive() {
   const inst = best("inst"), hist = best("hist");
   const el = $("history-live");
   if (!hist || !inst) {
-    const trained = [...new Set(manifest.detection.models.filter(m => m.features === "hist").map(m => familyLabel(manifest, familyOf(m))))];
+    const trained = [...new Set(manifest.detection.models.filter(m => isHist(m.features)).map(m => familyLabel(manifest, familyOf(m))))];
     el.innerHTML = trained.length
       ? `<p class="note">${esc(familyLabel(manifest, fam))} was trained on instantaneous readings only. History versions exist for: ${trained.map(esc).join(", ")}.</p>`
       : `<p class="note">These results don't include history models yet.</p>`;
@@ -259,9 +261,11 @@ function renderHistoryLive() {
   const gain = hist.val.recall - inst.val.recall;
   el.innerHTML = `<p>Best ${esc(lowerLabel(familyLabel(manifest, fam)))} with and without history, at 5% false alarms:</p>
     <div class="table-wrap"><table><thead><tr><th>Inputs</th><th>Best settings</th><th class="n">Faults caught</th><th class="n">ROC-AUC</th></tr></thead>
-    <tbody>${row("Instantaneous (52)", inst)}${row("With 30-min history (156)", hist)}</tbody></table></div>
+    <tbody>${row("Instantaneous (52)", inst)}${row("With 30-min history (156)", hist)}${isHist(model.features) && model.features !== "hist" && familyOf(model) === fam
+      ? row(`With ${windowText(windowOf(model.features))} history (156)`, model) : ""}</tbody></table></div>
     <p style="margin-top:10px">History ${gain >= 0 ? `adds <b>${(100 * gain).toFixed(1)} percentage points</b>` : `costs <b>${(-100 * gain).toFixed(1)} percentage points</b>`}
-      of faults caught for this model. Compare the fault-by-fault and detection-speed charts with the inputs switch to see which faults gain.</p>`;
+      of faults caught for this model. Compare the fault-by-fault and detection-speed charts with the inputs switch to see which faults gain,
+      and see <a href="#window">How much history helps</a> for other window lengths.</p>`;
 }
 
 // ---------- Learn: class weighting ----------
@@ -672,4 +676,13 @@ function renderCalibration() {
       ? `<b>The scores are too low:</b> samples are faulty ${pct(gap, 0)} more often, on average, than the scores say.
          ${state.model.class_weight === "balanced" ? "That is the expected effect of balanced class weighting, which deliberately pulls scores down when most samples are faulty." : ""}`
       : `<b>The scores are too high:</b> samples are faulty ${pct(-gap, 0)} less often, on average, than the scores say.`) + worstText;
+}
+
+function renderWindow() {
+  renderWindowSweep({
+    task: "detection", manifest: state.manifest, model: state.model,
+    els: { section: $("window"), legend: $("legend-window"), chart: $("chart-window"), legend2: $("legend-window2"),
+           chart2: $("chart-window2"), speedNote: $("window-speed-note"), callout: $("callout-window") },
+    onPick: m => state.bar.set(selectionOf(m)),
+  }).catch(showError);
 }
