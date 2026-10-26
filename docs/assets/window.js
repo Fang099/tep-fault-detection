@@ -100,7 +100,7 @@ export async function renderWindowSweep({ task, manifest, model, els, onPick }) 
   // Callout for the selected model's family (or the first family).
   const k = Math.max(0, chains.findIndex(c => c.family === fam));
   const c = chains[k], pts = c.points;
-  const best = pts.reduce((a, b) => (metricOf(task, b.model) > metricOf(task, a.model) ? b : a));
+  const best = pts.filter(p => p.model.selectable !== false).reduce((a, b) => (metricOf(task, b.model) > metricOf(task, a.model) ? b : a));
   const none = pts.find(p => p.w === 0), longest = pts[pts.length - 1];
   const sp = speed[k]?.points;
   const tOf = w => sp?.[pts.findIndex(p => p.w === w)]?.[1];
@@ -112,5 +112,9 @@ export async function renderWindowSweep({ task, manifest, model, els, onPick }) 
   if (sp && tOf(longest.w) != null && tOf(pts[0].w) != null && tOf(longest.w) > tOf(pts[0].w))
     text += ` Longer windows also react later: typically ${fmtMinutes(tOf(pts[0].w))} with ${pts[0].w === 0 ? "no history" : windowShort(pts[0].w)}
       against ${fmtMinutes(tOf(longest.w))} with ${windowShort(longest.w)}.`;
-  els.callout.innerHTML = text + ` <span class="note">Windows other than 30 minutes use the best 30-minute settings, so they are compared on equal terms.</span>`;
+  const unselectable = chains.flatMap(c => c.points).filter(p => p.model.selectable === false).map(p => p.w);
+  const capNote = unselectable.length ? ` Windows longer than 1 hour (${[...new Set(unselectable)].map(windowShort).join(", ")}) are shown but never
+    picked as the best model: training and validation faults start after 1 hour, so such a window is still partly empty when the fault
+    starts, while in the test files (fault after 8 hours) it is full. Validation would flatter them.` : "";
+  els.callout.innerHTML = text + ` <span class="note">Windows other than 30 minutes use the best 30-minute settings, so they are compared on equal terms.${capNote}</span>`;
 }

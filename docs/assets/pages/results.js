@@ -106,10 +106,11 @@ function renderFindings(manifest) {
       const fams = [...new Set(sweeps.map(familyOf))];
       const parts = fams.map(f => {
         const chain = manifest.detection.models.filter(m => familyOf(m) === f && (m.sweep_of || m.id === sweeps.find(x => familyOf(x) === f).sweep_of));
-        const b = chain.reduce((a, c) => (c.val.recall > a.val.recall ? c : a));
+        const b = chain.filter(m => m.selectable !== false).reduce((a, c) => (c.val.recall > a.val.recall ? c : a));
         return `${esc(familyLabel(manifest, f))}: ${windowText(windowOf(b.features))} (${pct(b.val.recall)})`;
       });
-      return `<b>The best amount of history depends on the model.</b> Best window at 5% false alarms — ${parts.join("; ")}.
+      return `<b>The best amount of history depends on the model.</b> Best window at 5% false alarms (up to 1 hour, the longest window
+        validation can judge fairly) — ${parts.join("; ")}.
         Longer windows catch slow, subtle faults better but react later to sudden ones. See <a href="detection.html#window">How much history helps</a>.`;
     })(),
     `<b>Detection speed varies enormously by fault:</b> from minutes for sudden faults to many hours, or never, for subtle ones.
@@ -176,21 +177,29 @@ async function renderTest(manifest) {
     return;
   }
   const detIds = Object.keys(test.detection), diaIds = Object.keys(test.diagnosis);
-  const label = (task, id) => manifest[task].models.find(m => m.id === id)?.label || id;
+  const label = (task, id) => esc(manifest[task].models.find(m => m.id === id)?.label || id);
+  const av = test.as_validated || {};
+  const detRow = (name, r, sub) => `<tr class="${sub ? "sub" : ""}"><td>${name}</td><td class="n">${pct(r.recall)}</td>
+        <td class="n">${pct(1 - r.normal_recall)}</td><td class="n">${pct(r.precision)}</td><td class="n">${num(r.F1, 3)}</td>
+        <td class="n">${num(r.ROC_AUC, 3)}</td><td class="n">${num(r.PR_AUC, 3)}</td></tr>`;
+  const diaRow = (name, r, sub) => `<tr class="${sub ? "sub" : ""}"><td>${name}</td><td class="n">${num(r.macro_F1, 3)}</td><td class="n">${pct(r.accuracy)}</td></tr>`;
   body.innerHTML = `
     <p class="intro">The chosen models, retrained on all training runs and evaluated once on ${int(test.rows)} test rows
       (${test.runs_per_fault} faulty runs per fault type plus the fault-free test runs; ${pct(test.fault_share, 0)} faulty).
-      Detection uses the threshold chosen on validation.</p>
+      Detection uses the threshold chosen on validation.${test.rows_copied_from_train != null
+        ? ` Test rows identical to a training row: <b>${int(test.rows_copied_from_train)}</b>${test.rows_copied_from_train === 0 ? " (no overlap)" : ""}.` : ""}</p>
     <h3>Detection</h3>
     <div class="table-wrap"><table><thead><tr><th>Model</th><th class="n">Caught</th><th class="n">False alarms</th><th class="n">Precision</th>
       <th class="n">F1</th><th class="n">ROC-AUC</th><th class="n">PR-AUC</th></tr></thead><tbody>${
-      detIds.map(id => { const r = test.detection[id]; return `<tr><td>${esc(label("detection", id))}</td><td class="n">${pct(r.recall)}</td>
-        <td class="n">${pct(1 - r.normal_recall)}</td><td class="n">${pct(r.precision)}</td><td class="n">${num(r.F1, 3)}</td>
-        <td class="n">${num(r.ROC_AUC, 3)}</td><td class="n">${num(r.PR_AUC, 3)}</td></tr>`; }).join("")}</tbody></table></div>
+      detIds.map(id => detRow(label("detection", id), test.detection[id])).join("")}${
+      Object.entries(av.detection || {}).map(([id, r]) => detRow(`${label("detection", id)} <span class="note">as validated</span>`, r, true)).join("")}</tbody></table></div>
+    ${av.detection && Object.keys(av.detection).length ? `<p class="note">"As validated" is the same model trained on the training runs only, the exact model the
+      threshold was set for. Its test false alarm rate shows how well the 5% chosen on validation carries over to new runs; the
+      retrained model (all training runs) is the headline result.</p>` : ""}
     <h3>Diagnosis</h3>
     <div class="table-wrap"><table><thead><tr><th>Model</th><th class="n">Macro-F1</th><th class="n">Accuracy</th></tr></thead><tbody>${
-      diaIds.map(id => { const r = test.diagnosis[id]; return `<tr><td>${esc(label("diagnosis", id))}</td><td class="n">${num(r.macro_F1, 3)}</td>
-        <td class="n">${pct(r.accuracy)}</td></tr>`; }).join("")}</tbody></table></div>
+      diaIds.map(id => diaRow(label("diagnosis", id), test.diagnosis[id])).join("")}${
+      Object.entries(av.diagnosis || {}).map(([id, r]) => diaRow(`${label("diagnosis", id)} <span class="note">as validated</span>`, r, true)).join("")}</tbody></table></div>
     <h3>Validation against test, per fault (best detection model)</h3>
     <div class="plot"><div id="legend-test"></div><div id="chart-test"></div></div>`;
 

@@ -72,7 +72,9 @@ export function fmtC(C) {
   if (C == null) return "∞";
   const e = Math.round(Math.log10(C));
   if (Math.abs(10 ** e - C) / C < 1e-9) return e >= -3 ? String(+(10 ** e).toFixed(3)) : `1e${e}`;
-  return String(C);
+  // e.g. 3e-6, 3e-5, 0.0003
+  const e2 = Math.floor(Math.log10(C)), mant = +(C / 10 ** e2).toPrecision(3);
+  return e2 >= -4 ? String(+C.toPrecision(3)) : `${mant}e${e2}`;
 }
 export function fmtMinutes(m) {
   if (m == null || !isFinite(m)) return "not detected";

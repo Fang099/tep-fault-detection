@@ -243,7 +243,7 @@ function renderObjective() {
   const none = findModel(manifest, task, { penalty: "none", weighting: w });
   $("objective-live").innerHTML = `
     <p>${task === "detection" ? "Detection" : "Diagnosis"} models here were trained on <i>N</i> = ${int(N)} rows. Smaller C makes the
-      penalty count for more, ten times more with each step of the slider:</p>
+      penalty count for more:</p>
     <div class="table-wrap"><table>
       <thead><tr><th class="n">C</th><th class="n">Penalty weight 1 / (C·N)</th><th class="n">Ridge${task === "detection" ? ", balanced" : ""}</th>
         <th class="n">Lasso${task === "detection" ? ", balanced" : ""}</th><th class="n">Lasso sensors</th></tr></thead>
@@ -255,8 +255,9 @@ function renderObjective() {
         <tr><td class="n">∞</td><td class="n">0</td><td class="n" colspan="2" style="text-align:center">no penalty: ${metric(none)}</td><td class="n">52</td></tr></tbody>
     </table></div>
     <p style="margin-top:10px">With this many rows, the average loss dominates until the penalty weight grows large, which is why the curves
-      above stay flat for large C and only fall away at the left. It also means the same C regularizes less on more data: with all
-      500 runs per fault, <i>N</i> is about five times larger, so each C will behave roughly like a C five times larger does here.
+      above stay flat for large C and only fall away at the left. It also means the same C regularizes less on more data:
+      ${manifest.dataset.runs_per_fault < 500 ? `with all 500 runs per fault, <i>N</i> would be about ${Math.round(500 / manifest.dataset.runs_per_fault)} times larger, so each C would behave roughly like a C that many times larger does here.`
+        : "doubling the rows has the same effect as doubling C."}
       The highlighted row follows the C slider in the coefficient paths below.</p>`;
 }
 

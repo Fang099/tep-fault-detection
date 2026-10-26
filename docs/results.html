@@ -51,7 +51,11 @@
         literature, because they barely change the statistics of the measured data. Low scores on them are expected.</li>
       <li><b>Detection delays can include chance alarms.</b> At a 5% false-alarm rate, three alarms in a row eventually happen on normal
         operation too, so long delays for weakly detected faults overstate what the model can do.</li>
-      <li><b>Thresholds are chosen on validation.</b> On new data the actual false-alarm rate can drift from the 5% target.</li>
+      <li><b>Thresholds are chosen on validation.</b> On new data the actual false-alarm rate can drift from the 5% target. The final
+        test therefore also reports the exact validated model (trained on the training runs only), whose threshold fits it exactly.</li>
+      <li><b>History windows warm up.</b> At the start of every run a rolling window holds fewer samples than its length. In training
+        and validation the fault starts after 1 hour, so windows longer than that are never full when a fault begins; they are shown
+        but not used to choose the best model.</li>
       <li><b>Training subsamples time steps.</b> To keep training time practical, models train on every few time steps of each run;
         validation and test use every row.</li>
       <li><b>Simulation only.</b> Conclusions are limited to the TEP benchmark and may not carry over to a real plant.</li>

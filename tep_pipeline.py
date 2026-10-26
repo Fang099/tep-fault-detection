@@ -12,7 +12,8 @@ process variables only (41 xmeas_* + 11 xmv_*); identifiers and labels are never
   - Testing: 960 samples per run. Fault injected after sample 160.
 
 Protocol
-  1. Split the training files by simulation run (80% / 20% of runs per fault type, stratified).
+  1. Split the training files by simulation number (80% / 20%): faulty run k of every fault type starts as a copy of
+     fault-free run k, so all runs with the same number go to the same side.
   2. Train every variant on the training runs; choose thresholds and the best variant on validation.
   3. Retrain the chosen variants on all training runs, keep the validation thresholds, evaluate once on test.
 
@@ -32,7 +33,8 @@ size without retraining.
 
 Inputs: every family uses the 52 instantaneous readings. Families listed in --history-families are also trained
 with recent history added: a trailing 30-minute (10-sample) mean and standard deviation of each reading, computed
-within each run from past samples only (156 inputs).
+within each run from past samples only (156 inputs). A window sweep (--hist-windows) then retrains the best
+30-minute settings of each of those families with other window lengths.
 
 Exports per model: score histograms (with the exact thresholds as bin edges), detection delays at several
 false-alarm rates plus a chance reference from fault-free runs, run-level bootstrap intervals, calibration
@@ -44,7 +46,7 @@ Usage
   python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 100 --families tree,rf
   python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 0 --final-test   # all runs + test
 
-Results are written to <out-dir>/outputs_<N>runs (or outputs_full): models/ and web_data/ (website files).
+Results are written to <out-dir>/outputs_<N>runs (or outputs_full): models_v3/ and web_data/ (website files).
 Finished models are skipped on re-runs, so an interrupted run can simply be restarted.
 """
 import argparse
@@ -123,7 +125,11 @@ FAULT_ONSET = {"train": 20, "test": 160}   # last pre-injection sample in each f
 SAMPLE_MINUTES = 3
 ID_COLS = ["faultNumber", "simulationRun", "sample"]
 
-C_GRID = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1.0]   # website slider values; "none" = no penalty
+# Regularization strengths (website slider values; "none" = no penalty). The penalty per training row scales like
+# 1/(C x rows), so with all 500 runs the interesting range moves to smaller C than with 100 runs. At 100 runs, lasso
+# kept every sensor from C = 0.01 up and matched no penalty, while C = 0.1 and 1 took 20-25 minutes each; the grid
+# therefore stops at 0.01 and is finer where sensors start to drop out.
+C_GRID = [1e-6, 3e-6, 1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 1e-2]
 CLASS_WEIGHTS = [None, "balanced"]                     # detection only
 SELECTION_FAR = args.selection_far
 FAR_LEVELS = [0.01, 0.02, 0.05, 0.10, 0.20]            # detection delays are precomputed at these alarm rates
@@ -194,8 +200,11 @@ def load_tep(name: str) -> pd.DataFrame:
     if local_pq.exists():
         return pd.read_parquet(local_pq)
 
-    df = pd.read_csv(DRIVE_DIR / f"{name}.csv")
-    float_cols = df.select_dtypes("float64").columns
+    # Parse straight into float32/int32: the faulty test file has ~10M rows, too big for memory as float64.
+    header = pd.read_csv(DRIVE_DIR / f"{name}.csv", nrows=0).columns
+    dtypes = {c: "float32" for c in header if c.startswith(("xmeas_", "xmv_"))}
+    df = pd.read_csv(DRIVE_DIR / f"{name}.csv", dtype=dtypes)     # ids may be written as 1.0, so convert after
+    float_cols = df.select_dtypes("float64").columns.difference(ID_COLS)
     df[float_cols] = df[float_cols].astype("float32")
     df[ID_COLS] = df[ID_COLS].astype("int32")
     try:
@@ -303,12 +312,35 @@ def window_text(w):
     return f"{m}-min" if m < 60 else f"{m // 60}-hour" if m % 60 == 0 else f"{m / 60:g}-hour"
 
 
-def history_block(df, window):
-    """Trailing rolling mean and std of every reading, per run. df must be sorted by run and sample."""
-    g = df.groupby("run_id", sort=False)[FEATURES]
-    mean = g.rolling(window, min_periods=1).mean().reset_index(level=0, drop=True).sort_index()
-    std = g.rolling(window, min_periods=2).std().reset_index(level=0, drop=True).sort_index().fillna(0.0)
-    return mean.to_numpy(np.float32), std.to_numpy(np.float32)
+def history_block(df, window, chunk_rows=200_000):
+    """Trailing rolling mean and std (ddof=1) of every reading over the last `window` samples of the same run,
+    the current sample included. Matches pandas rolling(window, min_periods=1).mean() and
+    rolling(window, min_periods=2).std().fillna(0). Computed with cumulative sums, whole runs at a time, in chunks,
+    so the full dataset fits in memory. df must be sorted by run and sample (it is)."""
+    x = df[FEATURES].to_numpy(np.float32)
+    run = df["run_id"].to_numpy()
+    starts = np.flatnonzero(np.r_[True, run[1:] != run[:-1]])          # first row of each run
+    bounds = np.r_[starts, len(run)]
+    mean, std = np.empty_like(x), np.empty_like(x)
+    a = 0
+    while a < len(run):
+        b = bounds[np.searchsorted(bounds, a + chunk_rows, side="left")] if a + chunk_rows < len(run) else len(run)
+        b = max(b, bounds[np.searchsorted(bounds, a, side="right")])   # at least one whole run
+        xc = x[a:b].astype(np.float64)
+        xc -= xc.mean(axis=0)                                           # centring keeps the sums small and exact
+        c1 = np.vstack([np.zeros((1, xc.shape[1])), np.cumsum(xc, axis=0)])
+        c2 = np.vstack([np.zeros((1, xc.shape[1])), np.cumsum(xc * xc, axis=0)])
+        idx = np.arange(b - a)
+        run_start = starts[np.searchsorted(starts, np.arange(a, b), side="right") - 1] - a
+        lo = np.maximum(idx - window + 1, run_start)
+        n = (idx - lo + 1)[:, None].astype(np.float64)
+        s1, s2 = c1[idx + 1] - c1[lo], c2[idx + 1] - c2[lo]
+        m = s1 / n
+        var = np.where(n > 1, np.maximum(s2 - n * m * m, 0.0) / np.maximum(n - 1, 1), 0.0)
+        mean[a:b] = (m + x[a:b].astype(np.float64).mean(axis=0)).astype(np.float32)
+        std[a:b] = np.sqrt(var).astype(np.float32)
+        a = b
+    return mean, std
 
 
 def raw_inputs(df, fs):
@@ -785,13 +817,21 @@ def pcalr_checkpoint(task, k, model, Xv, secs):
 
 
 def pca_monitor_fit(X_normal):
-    return PCA(random_state=SEED).fit(X_normal)
+    """PCA of normal operation. The readings are re-standardized with the fault-free rows' own mean and standard
+    deviation (the shared scaler is fitted on all training rows, most of them faulty), as in classical monitoring,
+    so the model never uses anything from faulty data."""
+    scaler = StandardScaler().fit(X_normal)
+    pca = PCA(random_state=SEED).fit(scaler.transform(X_normal))
+    pca.tep_scaler_ = scaler
+    return pca
 
 
 def pca_monitor_scores(pca, X, k):
     """Hotelling's T^2 (distance inside the k-dimensional model plane, scaled by each component's variance) and
     SPE (squared distance from the plane, i.e. what the model can't explain)."""
     P, lam = pca.components_[:k], pca.explained_variance_[:k]
+    if hasattr(pca, "tep_scaler_"):
+        X = pca.tep_scaler_.transform(X)
     Xc = X - pca.mean_
     T = Xc @ P.T
     t2 = np.sum(T ** 2 / lam, axis=1)
@@ -1009,7 +1049,7 @@ def run_task(task):
 
 def summary_table(summaries, metric_keys):
     rows = [{"id": s["id"], "family": s["family"], "inputs": s.get("features", "inst"), "used": s.get("coef_nonzero"),
-             **{k: s["val"][k] for k in metric_keys}} for s in summaries]
+             "selectable": s.get("selectable", True), **{k: s["val"][k] for k in metric_keys}} for s in summaries]
     return pd.DataFrame(rows).set_index("id")
 
 
@@ -1098,6 +1138,8 @@ def run_sweep():
         todo = []
         for j in (j for j in jobs if j["fs"] == fs):
             old = existing_summary(j["task"], j["id"])
+            if old is not None:
+                old["selectable"] = w <= FAULT_ONSET["train"]
             if up_to_date(old) and not forced(j["family"]):
                 (det_summaries if j["task"] == "detection" else diag_summaries).append(old)
             else:
@@ -1121,7 +1163,10 @@ def run_sweep():
                     (det_summaries if task == "detection" else diag_summaries).append(old)
                 continue
             explain = final_explain({"family": family}, model, INPUT_NAMES[fs])
-            extra = {"sweep_of": j["base"]["id"], "hist_window": w}
+            # Training faults start after sample 20 (1 hour). A longer window is still partly empty when a fault
+            # starts in training and validation, but full in the test files (fault after 8 hours), so validation
+            # flatters it. Such windows are shown on the website but not used to pick the best model.
+            extra = {"sweep_of": j["base"]["id"], "hist_window": w, "selectable": w <= FAULT_ONSET["train"]}
             if family == "logreg":
                 extra.update({"penalty": p["penalty"], "C": p["C"],
                               **({"class_weight": p.get("class_weight", "none")} if task == "detection" else {})})
@@ -1143,7 +1188,7 @@ det_table = summary_table(det_summaries, ["recall", "precision", "F1", "ROC_AUC"
 # ### Choosing the best detection model
 # All models are compared at the same operating point (5% false alarms on validation normal rows), fixed before
 # looking at the results, so the best model is the one that catches the most faults there.
-candidates = det_table[det_table["family"] != "baseline"]
+candidates = det_table[(det_table["family"] != "baseline") & det_table["selectable"]]
 best_det_id = candidates["recall"].idxmax()
 best_det = next(s for s in det_summaries if s["id"] == best_det_id)
 print("\nBest detection model per family and input set (recall at 5% false alarms):")
@@ -1152,7 +1197,7 @@ print(candidates.loc[grp].sort_values("recall", ascending=False).round(4))
 print("Best detection model:", best_det["label"])
 
 diag_table = summary_table(diag_summaries, ["macro_F1", "accuracy"])
-diag_candidates = diag_table[diag_table["family"] != "baseline"]
+diag_candidates = diag_table[(diag_table["family"] != "baseline") & diag_table["selectable"]]
 best_diag_id = diag_candidates["macro_F1"].idxmax()
 best_diag = next(s for s in diag_summaries if s["id"] == best_diag_id)
 print("\nBest diagnosis model per family and input set (macro-F1):")
@@ -1167,7 +1212,7 @@ print("Best diagnosis model:", best_diag["label"])
 
 def export_data_summary():
     normal = train_df[train_df["faultNumber"] == 0]
-    X_norm = scalers["inst"].transform(normal[FEATURES].to_numpy(np.float32))
+    X_norm = StandardScaler().fit_transform(normal[FEATURES].to_numpy(np.float32))    # standardized on normal rows
     pca = PCA(random_state=SEED).fit(X_norm)
     stats_tbl = normal[FEATURES].agg(["mean", "std", "min", "max"]).T
     write_json(WEB_DIR / "data_summary.json", {
@@ -1196,7 +1241,7 @@ def best_by_family(summaries, key):
     out = {}
     for s in summaries:
         f = s["family"]
-        if f != "baseline" and (f not in out or s["val"][key] > out[f][1]):
+        if f != "baseline" and s.get("selectable", True) and (f not in out or s["val"][key] > out[f][1]):
             out[f] = (s["id"], s["val"][key])
     return {f: v[0] for f, v in out.items()}
 
@@ -1285,12 +1330,41 @@ if args.final_test:
 
     chosen = [("detection", best_det), ("detection", next(s for s in det_summaries if s["family"] == "baseline")),
               ("diagnosis", best_diag), ("diagnosis", next(s for s in diag_summaries if s["family"] == "baseline"))]
+    # The chosen models exactly as validated (trained on the training runs only), on test with their validation
+    # threshold. This is the model the threshold was set for, so its test false alarm rate shows how well the 5%
+    # carries over; the retrained models below are the headline result.
+    test_results["as_validated"] = {"detection": {}, "diagnosis": {}}
+    for task, summary in chosen:
+        if summary["family"] == "baseline":
+            continue
+        fs = summary.get("features", "inst")
+        if fs not in X_train:
+            build_inputs(fs)
+        if summary["family"] == "pcamon":
+            model = pca_monitor_fit(X_train["inst"][normal_in_keep])
+        else:
+            X, y, _ = task_data(task, fs)
+            model = fit_with_params(task, summary["family"], summary["params"], X, y)
+            del X
+        X_test_v = scalers[fs].transform(raw_inputs(test_df, fs)).astype(np.float32)
+        if task == "detection":
+            m = detection_metrics(y_test, final_scores(task, summary, model, X_test_v), summary["val"]["threshold"])
+        else:
+            m, _, _ = diagnosis_metrics(faults_test[test_post], final_scores(task, summary, model, X_test_v[test_post]))
+        test_results["as_validated"][task][summary["id"]] = m
+        print(f"TEST (as validated) {summary['label']:45s}", {k: round(v, 4) for k, v in m.items() if not isinstance(v, int)})
+        del model, X_test_v
+
+    # Free the training/validation inputs first: on the full dataset memory is the limit here.
+    X_train.clear(); X_val.clear()
+    import gc; gc.collect()
     final_inputs = {}
     for fs in {s.get("features", "inst") for _, s in chosen}:
         raw_full = raw_inputs(full_df, fs)
-        sc = StandardScaler().fit(raw_full)
-        final_inputs[fs] = (sc.transform(raw_full).astype(np.float32), sc.transform(raw_inputs(test_df, fs)).astype(np.float32))
-        del raw_full
+        sc = StandardScaler(copy=False).fit(raw_full)               # transform in place (float32 stays float32)
+        raw_test = raw_inputs(test_df, fs)
+        final_inputs[fs] = (sc.transform(raw_full), sc.transform(raw_test))
+        del raw_full, raw_test
 
     for task, summary in chosen:
         fs = summary.get("features", "inst")
