@@ -114,7 +114,7 @@ DATA_DIR = Path(args.work_dir) if args.work_dir else DRIVE_DIR
 RUNS_PER_FAULT = args.runs_per_fault or None                 # None = all runs
 OUT_DIR = Path(args.out_dir or DRIVE_DIR) / ("outputs_full" if RUNS_PER_FAULT is None
                                               else f"outputs_{RUNS_PER_FAULT}runs")
-MODEL_DIR = OUT_DIR / "models_v3"                   # v3: split by simulation number (older models used a leaky split)
+MODEL_DIR = OUT_DIR / "models_v3"     # v3: split by simulation number (older models used a leaky split); saved compressed (forests are large)
 WEB_DIR = OUT_DIR / "web_data"                               # everything the website needs
 for d in (DATA_DIR, MODEL_DIR, WEB_DIR / "detection", WEB_DIR / "diagnosis"):
     d.mkdir(parents=True, exist_ok=True)
@@ -968,7 +968,7 @@ def run_linear(task, fs="inst"):
             t0 = time.time()
             model.fit(X, y)
             secs = time.time() - t0
-            joblib.dump(model, path)
+            joblib.dump(model, path, compress=3)
         else:
             if old is not None:
                 summaries.append(old)                 # keep the older export as it is
@@ -1015,7 +1015,7 @@ def run_family(task, family, fs="inst"):
                 t0 = time.time()
                 model = fit_pcalr(task, unit, X, y) if family == "pcalr" else fit_tree_model(task, family, unit, X, y)
                 secs = time.time() - t0
-                joblib.dump(model, model_path)
+                joblib.dump(model, model_path, compress=3)
             else:
                 summaries += [o for o in olds if o is not None]
                 continue
@@ -1157,7 +1157,7 @@ def run_sweep():
                 t0 = time.time()
                 model = fit_with_params(task, family, p, X, y)
                 secs = time.time() - t0
-                joblib.dump(model, path)
+                joblib.dump(model, path, compress=3)
             else:
                 if old is not None:
                     (det_summaries if task == "detection" else diag_summaries).append(old)
@@ -1308,7 +1308,7 @@ def fit_final(task, summary, X, y, X_normal=None):
             model.tep_classes_ = np.unique(y)
         else:
             model.fit(X, y)
-    joblib.dump(model, MODEL_DIR / f"final_{summary['id']}.joblib")
+    joblib.dump(model, MODEL_DIR / f"final_{summary['id']}.joblib", compress=3)
     return model
 
 
