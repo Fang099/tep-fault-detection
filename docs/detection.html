@@ -251,13 +251,15 @@
   <section class="section" id="speed" data-toc="How quickly">
     <h2>How quickly is a fault detected?</h2>
     <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model raises
-      3 alarms in a row. Bars show the median over runs; faded bars mean the fault was detected in only some runs.
+      several alarms in a row (3 by default; change it on the right). Bars show the median over runs; faded bars mean the fault was detected in only some runs.
       These were computed in advance at fixed false alarm rates, so they don't follow the threshold slider.</p>
     <div class="split">
       <div class="plot"><div id="chart-speed"></div></div>
       <div class="panel">
         <div class="control"><div class="control-head">False alarm rate</div>
           <div class="seg" id="speed-far"></div></div>
+        <div class="control" id="speed-k-wrap"><div class="control-head">Alarms in a row needed</div>
+          <div class="seg" id="speed-k"></div></div>
         <div class="tiles" id="tiles-speed"></div>
       </div>
     </div>
@@ -266,7 +268,7 @@
       <summary><span class="learn-tag">Learn</span>Why a long delay can be a chance alarm</summary>
       <div class="learn-body">
         <p>A normal process also raises alarms, at the false alarm rate <i>α</i>. If those alarms were independent from one 3-minute
-          sample to the next, the chance of three in a row starting at a given sample would be about (1 − <i>α</i>)<i>α</i>³, and the chance
+          sample to the next, the chance of <i>k</i> in a row starting at a given sample would be about (1 − <i>α</i>)<i>α</i><sup><i>k</i></sup>, and the chance
           of it happening somewhere in a run of <i>n</i> samples is roughly:</p>
         <div class="formula" id="f-chance"></div>
         <div id="chance-live"></div>

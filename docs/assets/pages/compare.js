@@ -36,6 +36,17 @@ async function main() {
   $("pick-a").addEventListener("change", e => { state.a = e.target.value; update(); });
   $("pick-b").addEventListener("change", e => { state.b = e.target.value; update(); });
   $("swap").addEventListener("click", () => { [state.a, state.b] = [state.b, state.a]; update(); });
+  const ks = manifest.settings.consecutive_levels || [];
+  state.speedK = String(manifest.settings.consecutive || 3);
+  $("speed-k-wrap").hidden = ks.length < 2;
+  $("speed-k").innerHTML = ks.map(k => `<button type="button" data-k="${k}"${String(k) === state.speedK ? ' class="on"' : ""}>${k}</button>`).join("");
+  $("speed-k").addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    state.speedK = b.dataset.k;
+    $("speed-k").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    if (state.files) renderSpeed(state.files.fa, state.files.fb);
+  });
 }
 
 // Default comparison: the best model overall against the best model of a different family
@@ -238,16 +249,18 @@ function renderRoc() {
 
 // ---------- 3. Speed ----------
 function delaysOf(file) {
-  if (state.task !== "detection") return file.val.delays;
-  return file.val.delays[nearestDelayLevel(file.val.delays, state.far)].by_fault;
+  const k = state.speedK, def = String(state.manifest.settings.consecutive || 3);
+  if (state.task !== "detection") return file.val.delays_by_k ? file.val.delays_by_k[k] || {} : (k === def ? file.val.delays : {});
+  const d = file.val.delays[nearestDelayLevel(file.val.delays, state.far)];
+  return d.by_k ? d.by_k[k]?.by_fault || {} : (k === def ? d.by_fault : {});
 }
 function renderSpeed(fa, fb) {
   const da = delaysOf(fa), db = delaysOf(fb);
   const faults = Object.keys(da).map(Number).sort((a, b) => a - b);
   const all = faults.flatMap(f => [da[f][0], db[f]?.[0]]).filter(x => x != null);
   $("speed-intro").textContent = state.task === "detection"
-    ? `Median minutes from fault start to 3 alarms in a row, at ${pct(+nearestDelayLevel(fa.val.delays, state.far), 0)} false alarms. Faded bars: detected in only some runs.`
-    : "Median minutes from fault start to 3 correct diagnoses in a row. Faded bars: achieved in only some runs.";
+    ? `Median minutes from fault start to ${state.speedK} alarm${state.speedK === "1" ? "" : "s"} in a row, at ${pct(+nearestDelayLevel(fa.val.delays, state.far), 0)} false alarms. Faded bars: detected in only some runs.`
+    : `Median minutes from fault start to ${state.speedK} correct diagnos${state.speedK === "1" ? "is" : "es"} in a row. Faded bars: achieved in only some runs.`;
   legend($("legend-speed"), [{ label: "A", color: A }, { label: "B", color: B }]);
   barChart($("chart-speed"), {
     categories: faults.map(f => `Fault ${f}`),

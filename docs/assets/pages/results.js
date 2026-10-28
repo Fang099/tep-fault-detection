@@ -1,9 +1,9 @@
 import {
   renderChrome, showError, loadManifest, loadModel, loadTestModel, bestModel, dataNote, detectionView, findModel as findAny,
   familyOf, familyLabel, modelLink, COLORS, pct, num, int, tile, esc,
-  metricsAtFar, loadAllDetection, farControl, OFFICIAL_FAR, isHist, windowText, windowOf,
+  metricsAtFar, loadAllDetection, farControl, OFFICIAL_FAR, isHist, windowText, windowOf, getJSON, fmtMinutes,
 } from "../site.js";
-import { barChart, legend } from "../charts.js";
+import { barChart, lineChart, heatmap, legend } from "../charts.js";
 
 renderChrome();
 const $ = id => document.getElementById(id);
@@ -18,6 +18,8 @@ async function main() {
   farControl($("fam-far"), levels, fam.far, far => { fam.far = far; renderFamilies(manifest); });
   renderFamilies(manifest);
   renderFindings(manifest);
+  renderE2E(manifest).catch(showError);
+  renderDataCurve(manifest);
   await renderTest(manifest);
 }
 
@@ -215,4 +217,131 @@ async function renderTest(manifest) {
     x: { domain: [0, 1], fmt: x => pct(x, 0), label: "Share of the fault's rows caught at the validation threshold" },
     labelWidth: 70, valueFmt: x => pct(x, 0),
   });
+}
+
+// ---------- The whole system (end to end) ----------
+const E2E_ROWS = [["chain", "Two models in a chain"], ["single", "One model, 21 answers"], ["single_argmax", "One model, most likely answer"]];
+const e2e = { data: null, split: "val", which: "chain" };
+
+async function renderE2E(manifest) {
+  const body = $("e2e-body");
+  const data = await getJSON("data/end_to_end.json").catch(() => null);
+  if (!data) {
+    body.innerHTML = `<div class="empty" style="min-height:100px">These results appear after the next pipeline run.</div>`;
+    return;
+  }
+  e2e.data = data;
+  const m = data.models;
+  const ci = (v, c) => (c && c[1] > c[0] ? `<div class="note">${num(c[0], 3)} – ${num(c[1], 3)}</div>` : "");
+  const row = (key, name, d) => `<tr class="${key === "chain" ? "highlight" : ""}"><td>${name}</td>
+      <td class="n">${num(d.macro_F1, 3)}${ci(d.macro_F1, d.ci?.macro_F1)}</td><td class="n">${pct(d.accuracy)}</td>
+      <td class="n">${pct(d.false_alarm_rate)}</td><td class="n">${pct(d.faults_caught)}</td><td class="n">${pct(d.right_fault)}</td></tr>`;
+  const table = (split, title) => `<h3>${title}</h3><div class="table-wrap"><table>
+      <thead><tr><th>Approach</th><th class="n">Macro-F1, 21 answers</th><th class="n">Accuracy</th><th class="n">False alarms</th>
+        <th class="n">Faulty rows flagged</th><th class="n">Right fault named</th></tr></thead>
+      <tbody>${E2E_ROWS.filter(([k]) => data[split][k]).map(([k, n]) => row(k, n, data[split][k])).join("")}
+      ${split === "test" ? ["chain_as_validated", "single_as_validated"].filter(k => data.test[k]).map(k => row(k,
+        `${k.startsWith("chain") ? "Chain" : "One model"} <span class="note">as validated</span>`, data.test[k])).join("") : ""}</tbody></table></div>`;
+  const v = data.val, gap = v.single.macro_F1 - v.chain.macro_F1;
+  body.innerHTML = `
+    <p class="note">Chain: <b>${esc(m.detection_label)}</b> then <b>${esc(m.diagnosis_label)}</b>. One model: ${esc(m.single_settings)}, retrained
+      with 21 answers. "Right fault named" counts a faulty row as correct only when the fault number is right; a row flagged with the
+      wrong fault counts against it.</p>
+    ${table("val", "Validation")}
+    ${data.test ? table("test", "Final test") : ""}
+    <p class="callout">${Math.abs(gap) < 0.005 ? "<b>The two approaches are practically tied</b>" :
+      `<b>${gap > 0 ? "One model with 21 answers" : "Two specialised models in a chain"} does better</b>`} on validation: macro-F1
+      ${num(v.chain.macro_F1, 3)} for the chain against ${num(v.single.macro_F1, 3)} for one model, at
+      ${pct(v.chain.false_alarm_rate)} and ${pct(v.single.false_alarm_rate)} false alarms. ${v.single_argmax ? `Without false alarm control,
+      the single model's most likely answer raises false alarms on ${pct(v.single_argmax.false_alarm_rate)} of normal rows.` : ""}
+      Compared with diagnosis alone (which only ever sees truly faulty rows), the chain shows the real cost of missed detections and
+      false alarms.</p>
+    <div class="modelbar" style="position:static;margin-top:16px">
+      <div class="control"><div class="control-head">Approach</div><div class="seg" id="e2e-which">${E2E_ROWS.map(([k, n]) =>
+        `<button type="button" data-v="${k}" class="${k === e2e.which ? "on" : ""}">${n}</button>`).join("")}</div></div>
+      ${data.test ? `<div class="control"><div class="control-head">Data</div><div class="seg" id="e2e-split">
+        <button type="button" data-v="val" class="on">Validation</button><button type="button" data-v="test">Final test</button></div></div>` : ""}
+    </div>
+    <div class="plot"><div class="plot-title" id="e2e-title"></div><div id="chart-e2e"></div></div>
+    <p class="note" id="e2e-note"></p>`;
+  const seg = (id, key) => $(id)?.addEventListener("click", ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    e2e[key] = b.dataset.v;
+    $(id).querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    renderE2EMatrix();
+  });
+  seg("e2e-which", "which"); seg("e2e-split", "split");
+  renderE2EMatrix();
+}
+
+function renderE2EMatrix() {
+  const d = e2e.data[e2e.split][e2e.which];
+  const labels = e2e.data.labels, cm = d.confusion_matrix;
+  const shares = cm.map(r => { const t = r.reduce((a, b) => a + b, 0) || 1; return r.map(c => c / t); });
+  const name = l => (l === 0 ? "no fault" : `fault ${l}`);
+  $("e2e-title").textContent = `Where each true answer ends up: ${E2E_ROWS.find(r => r[0] === e2e.which)[1].toLowerCase()}, ${e2e.split === "val" ? "validation" : "final test"}`;
+  heatmap($("chart-e2e"), {
+    matrix: shares, rowLabels: labels.map(l => (l === 0 ? "none" : String(l))), colLabels: labels.map(l => (l === 0 ? "none" : String(l))),
+    rowTitle: "True answer", colTitle: "Predicted answer",
+    tip: (r, c) => `True <b>${name(labels[r])}</b>, predicted <b>${name(labels[c])}</b><br>${int(cm[r][c])} rows (${pct(shares[r][c])} of ${name(labels[r])})`,
+  });
+  const missed = labels.slice(1).map((l, k) => [l, shares[k + 1][0]]).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  $("e2e-note").innerHTML = `The first column is "no fault": a faulty row there was missed by detection. Most missed:
+    ${missed.map(([l, s_]) => `fault ${l} (${pct(s_, 0)} of its rows)`).join(", ")}. The first row is normal operation: anything off its
+    first cell is a false alarm.`;
+}
+
+// ---------- How much data (learning curve) ----------
+function renderDataCurve(manifest) {
+  const body = $("data-body"), lc = manifest.learning_curve;
+  if (!lc || !lc.detection) {
+    body.innerHTML = `<div class="empty" style="min-height:100px">These results appear after the next pipeline run.</div>`;
+    return;
+  }
+  const tasks = [["detection", "Detection: faults caught at 5% false alarms", COLORS.fault, v => pct(v)],
+                 ["diagnosis", "Diagnosis: macro-F1", COLORS.data, v => num(v, 3)]].filter(t => lc[t[0]]);
+  body.innerHTML = `
+    <p class="note">Detection model: ${esc(lc.detection?.label || "")}. Diagnosis model: ${esc(lc.diagnosis?.label || "")}.</p>
+    <div class="split">
+      <div class="plot"><div class="plot-title">Fewer simulation runs</div><div id="legend-lc1"></div><div id="chart-lc1"></div></div>
+      <div class="plot"><div class="plot-title">Sparser sampling inside each run</div><div id="legend-lc2"></div><div id="chart-lc2"></div></div>
+    </div>
+    <p class="callout" id="callout-lc"></p>`;
+  const items = tasks.map(([, n, c]) => ({ label: n, color: c }));
+  const ciTip = (p, fmt) => (p.ci && p.ci[1] > p.ci[0] ? `<br>95% interval ${fmt(p.ci[0])} – ${fmt(p.ci[1])}` : "");
+  const shares = Object.keys(lc.detection.runs).map(Number).sort((a, b) => a - b);
+  legend($("legend-lc1"), items);
+  lineChart($("chart-lc1"), {
+    height: 280,
+    x: { type: "log", domain: [shares[0] * 0.8, 1.15], ticks: shares, fmt: x => pct(x, 0), label: "Share of training simulation runs used (log scale)" },
+    y: { domain: [0, 1], fmt: y => pct(y, 0), label: "Validation score" },
+    series: tasks.map(([t, n, c, fmt]) => ({ name: n, color: c, width: 2.2, marker: 4,
+      points: shares.map(sh => [sh, lc[t].runs[String(sh)].metric, lc[t].runs[String(sh)], fmt]) })),
+    tip: (s_, p) => `<b>${s_.name}</b><br>${p[2].sims} of ${lc.detection.train_sims} simulation numbers (${int(p[2].rows)} training rows)<br>score <b>${p[3](p[1])}</b>${ciTip(p[2], p[3])}`,
+    hoverRadius: 18,
+  });
+  const strides = Object.keys(lc.detection.stride).map(Number).sort((a, b) => b - a);
+  legend($("legend-lc2"), items);
+  lineChart($("chart-lc2"), {
+    height: 280,
+    x: { type: "log", domain: [Math.max(...strides) * 1.25, Math.min(...strides) * 0.8], ticks: strides,
+         fmt: k => (k === 1 ? "every" : `1 in ${k}`), label: "Samples used for training (every 3 min = every sample)" },
+    y: { domain: [0, 1], fmt: y => pct(y, 0), label: "Validation score" },
+    series: tasks.map(([t, n, c, fmt]) => ({ name: n, color: c, width: 2.2, marker: 4,
+      points: strides.map(k => [k, lc[t].stride[String(k)].metric, lc[t].stride[String(k)], fmt]) })),
+    tip: (s_, p) => `<b>${s_.name}</b><br>every ${p[0] === 1 ? "" : p[0] + "th "}sample: one every ${fmtMinutes(p[0] * 3)} (${int(p[2].rows)} training rows)<br>score <b>${p[3](p[1])}</b>${ciTip(p[2], p[3])}`,
+    hoverRadius: 18,
+  });
+  // Callout: how much each axis moves the score.
+  const moves = tasks.map(([t]) => {
+    const r = lc[t].runs, st = lc[t].stride, full = r["1"].metric;
+    return { t, runs: full - r[String(shares[0])].metric, sparse: full - st[String(Math.max(...strides))].metric };
+  });
+  const say = (t, d) => (t === "detection" ? `${d >= 0 ? "+" : "−"}${Math.abs(d * 100).toFixed(1)} percentage points` : `${d >= 0 ? "+" : "−"}${num(Math.abs(d), 3)}`);
+  const parts = moves.map(m => `<b>${m.t === "detection" ? "Detection" : "Diagnosis"}:</b> all runs instead of ${pct(shares[0], 0)} of them:
+    ${say(m.t, m.runs)}; every sample instead of 1 in ${Math.max(...strides)}: ${say(m.t, m.sparse)}.`);
+  const runsWin = moves.every(m => m.runs > 2 * Math.abs(m.sparse));
+  $("callout-lc").innerHTML = parts.join(" ") + (runsWin
+    ? " More runs help far more than denser sampling: the useful information is in the variety of disturbances, not in the number of rows."
+    : " Sampling density matters too here, so the extra rows are not simply redundant.");
 }

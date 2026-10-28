@@ -85,8 +85,9 @@ loadManifest().then(manifest => {
     tile("Inputs", "52", "process variables"),
   ].join("");
   $("subset-note").innerHTML = `Current results use ${d.runs_per_fault < 500 ? `the first ${d.runs_per_fault} of 500 runs per fault type` : "all 500 runs per fault type"}.
-    To keep training time manageable, models train on every ${ordinal(s.det_stride)} time step for detection and every
-    ${ordinal(s.diag_stride)} for diagnosis, since neighbouring 3-minute samples are nearly identical. Validation and test always use every row.`;
+    ${s.det_stride === 1 && s.diag_stride === 1 ? "Models train on every time step of every training run." :
+      `To keep training time manageable, models train on every ${ordinal(s.det_stride)} time step for detection and every
+    ${ordinal(s.diag_stride)} for diagnosis, since neighbouring 3-minute samples are nearly identical.`} Validation and test always use every row.`;
 
   const det = bestModel(manifest, "detection"), dia = bestModel(manifest, "diagnosis");
   const detBase = manifest.detection.models.find(m => m.penalty === "baseline");

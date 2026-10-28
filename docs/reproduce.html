@@ -55,17 +55,20 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test</
       <tbody>
         <tr><td><code>--runs-per-fault</code></td><td class="n">100</td><td>Use the first N runs of each fault type; 0 means all 500.</td></tr>
         <tr><td><code>--families</code></td><td class="n">all</td><td>Model families to train, comma-separated: <code>logreg,pcalr,pcamon,tree,rf,gb,ada,xgb</code>. Finished models are always skipped.</td></tr>
-        <tr><td><code>--history-families</code></td><td class="n">logreg,rf,xgb</td><td>Families also trained with 30-minute rolling mean and standard deviation inputs; an empty string turns this off.</td></tr>
+        <tr><td><code>--history-families</code></td><td class="n">logreg,pcamon,rf,xgb</td><td>Families also trained with 30-minute rolling mean and standard deviation inputs; an empty string turns this off.</td></tr>
         <tr><td><code>--hist-windows</code></td><td class="n">2,5,20,40</td><td>Other history windows, in 3-minute samples, for the window sweep: the best 30-minute settings of each history family are retrained with each. An empty string skips the sweep.</td></tr>
-        <tr><td><code>--det-stride</code></td><td class="n">2</td><td>Detection trains on every k-th time step of each run.</td></tr>
-        <tr><td><code>--diag-stride</code></td><td class="n">5</td><td>Diagnosis trains on every k-th time step.</td></tr>
+        <tr><td><code>--det-stride</code></td><td class="n">1</td><td>Detection trains on every k-th time step of each run (1 = every step).</td></tr>
+        <tr><td><code>--diag-stride</code></td><td class="n">1</td><td>Diagnosis trains on every k-th time step (1 = every step).</td></tr>
         <tr><td><code>--selection-far</code></td><td class="n">0.05</td><td>False-alarm rate used to set thresholds and pick the best detection model.</td></tr>
-        <tr><td><code>--test-runs-per-fault</code></td><td class="n">100</td><td>Faulty test runs used per fault type in the final test.</td></tr>
+        <tr><td><code>--test-runs-per-fault</code></td><td class="n">0</td><td>Faulty test runs used per fault type in the final test; 0 = all 500.</td></tr>
+        <tr><td><code>--learning-curve</code></td><td class="n">1</td><td>Retrain the best detection and diagnosis models on fewer runs and sparser samples to measure how much data matters; 0 skips it.</td></tr>
+        <tr><td><code>--end-to-end</code></td><td class="n">1</td><td>Score detection and diagnosis together with 21 answers: the two-model chain and one 21-answer model with the best diagnosis settings; 0 skips it.</td></tr>
         <tr><td><code>--final-test</code></td><td class="n">off</td><td>Retrain the chosen models on all training runs and evaluate once on test.</td></tr>
         <tr><td><code>--force-retrain</code></td><td class="n">off</td><td>Retrain models even if their results already exist.</td></tr>
       </tbody></table></div>
-    <p class="note">Results go to <code>outputs_&lt;N&gt;runs/</code> (or <code>outputs_full/</code>) inside the data folder:
-      trained models in <code>models/</code> and the website files in <code>web_data/</code>.</p>
+    <p class="note">The full dataset is best run on a computer with about 32 GB of memory; a free Colab session has less memory and
+      stops after about 12 hours. Results go to <code>outputs_&lt;N&gt;runs/</code> (or <code>outputs_full/</code>) inside the data folder:
+      trained models in <code>models_v3/</code> and the website files in <code>web_data/</code>.</p>
   </section>
 
   <section class="section" id="site" data-toc="Update this website">

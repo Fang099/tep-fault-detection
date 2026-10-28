@@ -96,11 +96,15 @@
   <section class="section" id="speed" data-toc="How quickly">
     <h2>How quickly is the right fault named?</h2>
     <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model names the correct fault
-      3 times in a row. Faded bars mean this happened in only some runs.</p>
+      several times in a row (3 by default; change it on the right). Faded bars mean this happened in only some runs.</p>
     <div class="split">
       <div class="plot"><div id="chart-speed"></div></div>
-      <div class="panel"><div class="tiles" id="tiles-speed"></div>
-        <p class="note" style="margin:12px 0 0">Three correct answers in a row can also happen by chance for a fault the model
+      <div class="panel">
+        <div class="control" id="speed-k-wrap"><div class="control-head">Correct answers in a row needed</div>
+          <div class="seg" id="speed-k"></div></div>
+        <div class="tiles" id="tiles-speed"></div>
+        <p class="note" style="margin:6px 0 0">Showing: <span id="speed-k-note"></span>.</p>
+        <p class="note" style="margin:12px 0 0">A few correct answers in a row can also happen by chance for a fault the model
           barely recognizes, especially over a long run. Long delays with a low share of runs should be read as "not reliably diagnosed".</p></div>
     </div>
   </section>

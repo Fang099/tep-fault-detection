@@ -16,6 +16,17 @@ main().catch(showError);
 
 async function main() {
   const manifest = state.manifest = await loadManifest();
+  const ks = manifest.settings.consecutive_levels || [];
+  state.speedK = String(manifest.settings.consecutive || 3);
+  $("speed-k-wrap").hidden = ks.length < 2;
+  $("speed-k").innerHTML = ks.map(k => `<button type="button" data-k="${k}"${String(k) === state.speedK ? ' class="on"' : ""}>${k}</button>`).join("");
+  $("speed-k").addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    state.speedK = b.dataset.k;
+    $("speed-k").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    renderSpeed();
+  });
   $("data-note").innerHTML = dataNote(manifest);
   renderStaticFormulas();
   const q = new URLSearchParams(location.search);
@@ -177,14 +188,17 @@ function renderRecall() {
 
 // ---------- Speed ----------
 function renderSpeed() {
-  const delays = state.file.val.delays;
+  const k = state.speedK || String(state.manifest.settings.consecutive || 3);
+  const delays = state.file.val.delays_by_k ? state.file.val.delays_by_k[k] || {} :
+    (+k === (state.manifest.settings.consecutive || 3) ? state.file.val.delays : {});
+  $("speed-k-note").textContent = `${k} correct answer${+k === 1 ? "" : "s"} in a row`;
   const faults = Object.keys(delays).map(Number).sort((a, b) => a - b);
   const med = faults.map(f => delays[f][0]), share = faults.map(f => delays[f][1]);
   const finite = med.filter(x => x != null).sort((a, b) => a - b);
   barChart($("chart-speed"), {
     categories: faults.map(f => `Fault ${f}`),
     series: [{ name: "median", color: COLORS.data, values: med, opacity: share.map(s => 0.25 + 0.7 * s), missingLabel: "never named correctly" }],
-    x: { type: "log", domain: [3, Math.max(1000, ...finite) * 1.3], ticks: [3, 10, 30, 60, 180, 600], fmt: x => fmtMinutes(x), label: "Median time to a correct diagnosis (log scale)" },
+    x: { type: "log", domain: [Math.min(3, ...finite.filter(v => v > 0)), Math.max(1000, ...finite) * 1.3], ticks: [3, 10, 30, 60, 180, 600], fmt: x => fmtMinutes(x), label: "Median time to a correct diagnosis (log scale)" },
     labelWidth: 70, rowHeight: 21,
     valueFmt: (x, k) => `${pct(share[k], 0)} of runs`,
     tip: k => `<b>Fault ${faults[k]}</b>: ${faultDesc(faults[k])}<br>Median ${fmtMinutes(med[k])}, in ${pct(share[k], 0)} of runs`,

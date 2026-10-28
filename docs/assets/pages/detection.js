@@ -10,7 +10,16 @@ import { renderWindowSweep } from "../window.js";
 renderChrome();
 
 const state = { manifest: null, model: null, file: null, traces: null, view: null, t: 0, far: 0.05, farTarget: 0.05, fault: null,
-                speedFar: "0.05", runIndex: 1, token: 0 };
+                speedFar: "0.05", speedK: "3", runIndex: 1, token: 0 };
+
+// Delays for the chosen false alarm rate and "k alarms in a row" (older exports only have the default k).
+function speedEntry(far = state.speedFar, k = state.speedK) {
+  const d = state.file.val.delays[far];
+  if (!d) return null;
+  if (d.by_k) return d.by_k[k] || null;
+  return +k === (state.manifest.settings.consecutive || 3) ? d : null;
+}
+const inARow = k => `${k} alarm${+k === 1 ? "" : "s"} in a row`;
 const COST_RATIOS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
 const PREVALENCES = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5];
 const $ = id => document.getElementById(id);
@@ -49,6 +58,19 @@ async function main() {
     document.getElementById("threshold").scrollIntoView({ behavior: "smooth" });
   });
   $("run-fault").addEventListener("change", e => { state.runIndex = +e.target.value; renderRun(); });
+  const ks = manifest.settings.consecutive_levels || [];
+  state.speedK = String(manifest.settings.consecutive || 3);
+  $("speed-k-wrap").hidden = ks.length < 2;
+  $("speed-k").innerHTML = ks.map(k => `<button type="button" data-k="${k}"${String(k) === state.speedK ? ' class="on"' : ""}>${k}</button>`).join("");
+  $("speed-k").addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    state.speedK = b.dataset.k;
+    $("speed-k").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    renderSpeed();
+    renderChance();
+    renderRun();
+  });
   $("speed-far").addEventListener("click", e => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -180,8 +202,8 @@ function renderStaticFormulas() {
     M.block(M.t("AUC"), M.o("="), M.t("P"), M.paren(M.sub(M.i("s"), M.t("fault")), M.o(">"), M.sub(M.i("s"), M.t("normal"))),
             M.o("+"), M.frac(M.n(1), M.n(2)), M.t("P"), M.paren(M.sub(M.i("s"), M.t("fault")), M.o("="), M.sub(M.i("s"), M.t("normal"))));
   $("f-chance").innerHTML =
-    M.block(M.t("P(3 in a row within"), M.sp(0.3), M.i("n"), M.sp(0.3), M.t("samples)"), M.o("≈"), M.n(1), M.o("−"),
-            M.sup(M.paren(M.n(1), M.o("−"), M.paren(M.n(1), M.o("−"), M.i("α")), M.sup(M.i("α"), M.n(3))), M.i("n")));
+    M.block(M.t("P("), M.i("k"), M.sp(0.3), M.t("in a row within"), M.sp(0.3), M.i("n"), M.sp(0.3), M.t("samples)"), M.o("≈"), M.n(1), M.o("−"),
+            M.sup(M.paren(M.n(1), M.o("−"), M.paren(M.n(1), M.o("−"), M.i("α")), M.sup(M.i("α"), M.i("k"))), M.i("n")));
 }
 
 // ---------- Learn: how the selected model decides ----------
@@ -319,21 +341,24 @@ function renderAucLive() {
 // ---------- Learn: chance alarms ----------
 function renderChance() {
   const n = 500 - state.manifest.dataset.fault_onset.train;
-  const est = a => 1 - Math.pow(1 - (1 - a) * a ** 3, n);
+  const k = +state.speedK;
+  const est = a => 1 - Math.pow(1 - (1 - a) * a ** k, n);
   const delays = state.file.val.delays;
   const levels = Object.keys(delays).sort((a, b) => +a - +b);
-  const hasRef = levels.some(a => delays[a].reference);
+  const entry = a => speedEntry(a) || { by_fault: {}, reference: null };
+  const hasRef = levels.some(a => entry(a).reference);
   $("chance-live").innerHTML = `
-    <p>Validation runs have <i>n</i> = ${n} samples after the fault starts. Faults 3, 9 and 15 barely change the measurements,
-      so their "detections" are a good place to look for chance:</p>
+    <p>Validation runs have <i>n</i> = ${n} samples after the fault starts; here <i>k</i> = ${k} (${inARow(k)}). Faults 3, 9 and 15
+      barely change the measurements, so their "detections" are a good place to look for chance:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>False alarm rate</th><th class="n">Estimate if alarms were independent</th>${hasRef ? '<th class="n">Fault-free runs, measured</th>' : ""}<th class="n">Fault 3: runs "detected"</th><th class="n">Fault 9</th><th class="n">Fault 15</th></tr></thead>
-      <tbody>${levels.map(a => `<tr class="${a === state.speedFar ? "highlight" : ""}"><td>${pct(+a, 0)}</td><td class="n">${pct(est(+a), 1)}</td>${hasRef ? `<td class="n">${delays[a].reference ? pct(delays[a].reference[1], 0) : "–"}</td>` : ""}
-        ${[3, 9, 15].map(fl => `<td class="n">${delays[a].by_fault[fl] ? pct(delays[a].by_fault[fl][1], 0) : "–"}</td>`).join("")}</tr>`).join("")}</tbody>
+      <tbody>${levels.map(a => `<tr class="${a === state.speedFar ? "highlight" : ""}"><td>${pct(+a, 0)}</td><td class="n">${pct(est(+a), 1)}</td>${hasRef ? `<td class="n">${entry(a).reference ? pct(entry(a).reference[1], 0) : "–"}</td>` : ""}
+        ${[3, 9, 15].map(fl => `<td class="n">${entry(a).by_fault[fl] ? pct(entry(a).by_fault[fl][1], 0) : "–"}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
     <p style="margin-top:10px">${hasRef ? "The measured share on fault-free runs is usually well above the independent estimate." : "The observed shares are well above the estimate."}
       That is expected when alarms cluster in time: once the process wanders into an unusual-looking stretch, several consecutive samples
-      score high together, so three in a row is far more likely than independent alarms would suggest.
+      score high together, so ${k} in a row is far more likely than independent alarms would suggest. Requiring more alarms in a row
+      makes chance detections rarer but adds at least 3 minutes per extra alarm to every real detection.
       ${hasRef ? "The measured column is the honest reference: a fault whose share of runs detected isn't clearly above it isn't really being detected." : "A reference measured directly on fault-free runs will replace this rough estimate after the next pipeline run."}</p>`;
 }
 
@@ -476,15 +501,21 @@ function renderFaultPanel() {
 
 // ---------- Detection speed ----------
 function renderSpeed() {
-  const delays = state.file.val.delays[state.speedFar]?.by_fault || {};
+  const entry = speedEntry();
+  if (!entry) {
+    $("chart-speed").innerHTML = `<div class="empty">Not computed for ${inARow(state.speedK)} in these results.</div>`;
+    $("callout-speed").innerHTML = ""; $("tiles-speed").innerHTML = "";
+    return;
+  }
+  const delays = entry.by_fault || {};
   const faults = Object.keys(delays).map(Number).sort((a, b) => a - b);
   const med = faults.map(f => delays[f][0]), share = faults.map(f => delays[f][1]);
   const finite = med.filter(x => x != null).sort((a, b) => a - b);
-  const ref = state.file.val.delays[state.speedFar]?.reference;     // fault-free runs, as if a fault had started
+  const ref = entry.reference;     // fault-free runs, as if a fault had started
   barChart($("chart-speed"), {
     categories: faults.map(f => `Fault ${f}`),
     series: [{ name: "median delay", color: COLORS.data, values: med, opacity: share.map(s => 0.25 + 0.7 * s), missingLabel: "not detected" }],
-    x: { type: "log", domain: [3, Math.max(1000, ...finite) * 1.3], ticks: [3, 10, 30, 60, 180, 600], fmt: x => fmtMinutes(x), label: "Median time to detection (log scale)" },
+    x: { type: "log", domain: [Math.min(3, ...finite.filter(v => v > 0)), Math.max(1000, ...finite) * 1.3], ticks: [3, 10, 30, 60, 180, 600], fmt: x => fmtMinutes(x), label: "Median time to detection (log scale)" },
     labelWidth: 70, rowHeight: 21,
     valueFmt: (x, k) => `${pct(share[k], 0)} of runs`,
     highlight: state.fault ? faults.indexOf(state.fault) : null,
@@ -493,8 +524,8 @@ function renderSpeed() {
   });
   const chance = ref ? faults.filter((f, k) => share[k] <= Math.min(1, ref[1] + 0.15) && (med[k] == null || ref[0] == null || med[k] >= 0.5 * ref[0])) : [];
   $("callout-speed").innerHTML = ref
-    ? `<b>Chance reference:</b> on fault-free validation runs, measured as if a fault had started after the first hour, 3 alarms in a row
-       happen in ${pct(ref[1], 0)} of runs${ref[0] != null ? `, after a median of ${fmtMinutes(ref[0])} (the dashed "chance" line)` : ""}.
+    ? `<b>Chance reference:</b> on fault-free validation runs, measured as if a fault had started after the first hour, ${inARow(state.speedK)}
+       ${state.speedK === "1" ? "happens" : "happen"} in ${pct(ref[1], 0)} of runs${ref[0] != null ? `, after a median of ${fmtMinutes(ref[0])} (the dashed "chance" line)` : ""}.
        ${chance.length ? `Fault${chance.length > 1 ? "s" : ""} ${chance.join(", ")} ${chance.length > 1 ? "are" : "is"} not detected clearly more often or sooner than that, so ${chance.length > 1 ? "their" : "its"} "detections" may be chance alarms.` : "Every fault is detected clearly more often or sooner than that."}`
     : `<b>Read long delays with care.</b> At a 5% false alarm rate a normal process also raises occasional alarms, and over many hours three
        in a row eventually happen by chance. A reference measured on fault-free runs appears here after the next pipeline run.`;
@@ -621,18 +652,19 @@ function renderRun() {
   const after = run.rank.slice(on);
   const firstIdx = after.findIndex(isAlarm);
   let streakIdx = -1;
-  for (let k = 2; k < after.length; k++) if (isAlarm(after[k]) && isAlarm(after[k - 1]) && isAlarm(after[k - 2])) { streakIdx = k; break; }
+  const need = +state.speedK;
+  for (let k = 0, run_ = 0; k < after.length; k++) { run_ = isAlarm(after[k]) ? run_ + 1 : 0; if (run_ >= need) { streakIdx = k; break; } }
   const mins = k => (k < 0 ? "never" : fmtMinutes((k + 1) * tr.sample_minutes));
   const shareAfter = after.filter(isAlarm).length / after.length;
   $("tiles-run").innerHTML = run.fault
     ? [tile("False alarms before the fault", `${before} of ${on}`), tile("First alarm after the fault", mins(firstIdx)),
-       tile("3 alarms in a row after", mins(streakIdx)), tile("Faulty samples with an alarm", pct(shareAfter))].join("")
+       tile(`${inARow(state.speedK)} after`, mins(streakIdx)), tile("Faulty samples with an alarm", pct(shareAfter))].join("")
     : [tile("False alarms in the whole run", `${run.rank.filter(isAlarm).length} of ${run.rank.length}`),
        tile("Share of samples alarmed", pct(run.rank.filter(isAlarm).length / run.rank.length)),
-       tile("3 in a row after hour 1", mins(streakIdx))].join("");
+       tile(`${state.speedK} in a row after hour 1`, mins(streakIdx))].join("");
   $("callout-run").innerHTML = run.fault
     ? (streakIdx < 0 ? `<b>This run's fault is never reliably detected</b> at this threshold: the score rarely stays above the line.`
-       : `<b>The fault is caught ${mins(streakIdx)} after it starts</b> (3 alarms in a row). This is one run; the speed chart below summarizes every validation run.`)
+       : `<b>The fault is caught ${mins(streakIdx)} after it starts</b> (${inARow(state.speedK)}). This is one run; the speed chart below summarizes every validation run.`)
     : `<b>A fault-free run shows the false alarms an operator would see.</b> Every dot here is an alarm with nothing wrong.`;
 }
 

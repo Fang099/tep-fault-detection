@@ -36,6 +36,28 @@
     <div class="table-wrap" style="margin-top:14px"><table id="families-table"></table></div>
   </section>
 
+  <section class="section" id="e2e" data-toc="The whole system">
+    <h2>The whole system: detection and diagnosis together</h2>
+    <p class="intro">Every row gets one of 21 answers: "no fault" or the fault number. Two ways to get there, both held to
+      5% false alarms on validation:</p>
+    <ul class="tight">
+      <li><b>Two models in a chain:</b> the best detection model decides whether a fault is present; only then does the best diagnosis
+        model name it. No new training.</li>
+      <li><b>One model with 21 answers:</b> trained once, with the best diagnosis model's settings, on every row including normal ones.
+        It raises an alarm when its probability of "no fault" drops below a threshold set for 5% false alarms, then names its most likely
+        fault. Its plain "most likely answer", with no false alarm control, is shown too.</li>
+    </ul>
+    <div id="e2e-body"></div>
+  </section>
+
+  <section class="section" id="data" data-toc="How much data">
+    <h2>How much training data is enough?</h2>
+    <p class="intro">The best detection and diagnosis models, retrained with the same settings on less data, then scored on the same
+      validation runs. Two different kinds of "less": fewer simulation runs (each run is a new random disturbance pattern) and sparser
+      sampling inside the same runs (neighbouring samples are only 3 minutes apart).</p>
+    <div id="data-body"></div>
+  </section>
+
   <section class="section" id="findings" data-toc="Findings">
     <h2>Findings from validation</h2>
     <p class="data-note" id="data-note"></p>
@@ -56,8 +78,9 @@
       <li><b>History windows warm up.</b> At the start of every run a rolling window holds fewer samples than its length. In training
         and validation the fault starts after 1 hour, so windows longer than that are never full when a fault begins; they are shown
         but not used to choose the best model.</li>
-      <li><b>Training subsamples time steps.</b> To keep training time practical, models train on every few time steps of each run;
-        validation and test use every row.</li>
+      <li><b>Random forests and AdaBoost see a sample.</b> Each forest tree and each AdaBoost model trains on a random 25% of the
+        training rows to keep training time practical; every other model uses every row. <a href="#data">How much data is enough</a> shows how
+        much the amount of training data matters.</li>
       <li><b>Simulation only.</b> Conclusions are limited to the TEP benchmark and may not carry over to a real plant.</li>
     </ul>
   </section>

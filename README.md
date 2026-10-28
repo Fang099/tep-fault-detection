@@ -32,26 +32,32 @@ One row is one 3-minute time step of one simulation run. The models use only the
   of trees); gradient boosting, AdaBoost and XGBoost (tree depth, boosting rounds). Forests and boosted models are
   trained once per depth; smaller forests and fewer rounds are read off the same fit. PCA + logistic regression
   (number of components) and PCA process monitoring (Hotelling's T² and SPE, fitted on fault-free runs only).
+  Every model trains on every time step of every training run (random forests and AdaBoost: a random 25% per
+  tree/model).
 - **Temporal features (ablation):** selected families are also trained with a trailing 30-minute rolling mean and
   standard deviation of every reading, computed within each run from past samples only. A window sweep then
   retrains the best 30-minute settings of each of these families with 6-minute, 15-minute, 1-hour and 2-hour
   windows, to show how much history helps and how much later longer windows react.
+- **Detection and diagnosis together:** the best detection and diagnosis models in a chain, and one model with
+  21 answers (no fault, faults 1–20) trained with the best diagnosis settings, both at 5% false alarms.
+- **How much data matters:** the best models retrained on 5–100% of the training runs and on 1-in-20 to every
+  sample, scored on the same validation runs.
 - **Uncertainty:** 95% intervals from a run-level bootstrap (whole validation runs resampled within each fault type).
 - **Thresholds and model choice:** each detection model's threshold is set so 5% of normal validation rows raise
   an alarm; the best model catches the most faults at that point. The best diagnosis model has the highest
   validation macro-F1.
-- **Final test:** the chosen models are retrained on all training runs and evaluated once on the test files,
-  keeping the validation thresholds.
+- **Final test:** the chosen models are retrained on all training runs and evaluated once on all test runs,
+  keeping the validation thresholds; the exact validated models are evaluated too, as a check on the threshold.
 - **Metrics:** precision, recall, F1, PR-AUC, ROC-AUC and confusion matrices for detection; macro-F1 and
-  per-fault recall for diagnosis; median time from fault injection to detection (3 alarms in a row) and to
-  correct diagnosis (3 correct in a row).
+  per-fault recall for diagnosis; median time from fault injection to detection (k alarms in a row) and to
+  correct diagnosis (k correct in a row), for k = 1, 2, 3, 5, 10 (3 is the headline).
 
 ## Reproducing the results
 
 **Google Colab:** open `run_colab.ipynb` from this repo in Colab (File → Open notebook → GitHub), set
 `DATA_DIR` to the Drive folder holding the CSVs, and run the cells in order.
 
-**Any computer:**
+**Any computer** (recommended for the full dataset; 32 GB of RAM is comfortable):
 
 ```bash
 pip install -r requirements.txt
@@ -64,7 +70,7 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test
 ```
 
 Run `python tep_pipeline.py --help` for all options. Results go to `outputs_<N>runs/` (or `outputs_full/`)
-inside the data folder: trained models in `models/`, website data in `web_data/`. Finished models are skipped
+inside the data folder: trained models in `models_v3/`, website data in `web_data/`. Finished models are skipped
 on re-runs, so an interrupted run can be restarted.
 
 ## Repository layout

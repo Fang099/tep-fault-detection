@@ -75,8 +75,8 @@ export function explainer(task, model, manifest) {
     return { title: "How PCA monitoring works: Hotelling's T² and SPE", sigmoid: false, html: `
       <p>This is the classic way chemical plants are monitored, and it uses <b>no fault labels at all</b>. PCA is fitted on fault-free
         training runs only, to learn what normal operation looks like. The first <i>k</i> principal components span a "normal plane"
-        inside the 52-dimensional space of standardized readings. Every new sample <i>x</i> is then split into a part on the plane and a
-        part off it:</p>
+        inside the ${model.n_inputs || 52}-dimensional space of standardized ${(model.n_inputs || 52) > 52 ? "inputs (the 52 readings plus their rolling means and standard deviations)" : "readings"}.
+        Every new sample <i>x</i> is then split into a part on the plane and a part off it:</p>
       ${formula(
         M.block(t, M.o("="), M.sup(P, M.t("T")), x, M.sp(0.6), M.t("(the sample's coordinates on the k components)")),
         M.block(x, M.o("="), M.under(M.row(P, t), M.t("on the plane")), M.o("+"), M.under(M.row(x, M.o("−"), P, t), M.t("off the plane"))),
@@ -192,9 +192,10 @@ export function renderSensors({ chartEl, titleEl, introEl, file, model, faultInd
     return;
   }
   if (fam === "pcamon") {
-    introEl.textContent = "PCA monitoring has no per-sensor weights: it measures how far the whole 52-sensor reading sits from normal operation. In practice, operators trace an alarm back to sensors with contribution plots, which split T² or SPE into each sensor's share.";
+    const n = model.n_inputs || 52;
+    introEl.textContent = `PCA monitoring has no per-sensor weights: it measures how far the whole ${n}-input reading sits from normal operation. In practice, operators trace an alarm back to sensors with contribution plots, which split T² or SPE into each sensor's share.`;
     titleEl.textContent = "";
-    chartEl.innerHTML = `<div class="empty">Not applicable: T² and SPE use all 52 sensors together.</div>`;
+    chartEl.innerHTML = `<div class="empty">Not applicable: T² and SPE use all ${n} inputs together.</div>`;
     return;
   }
   if (!w) {

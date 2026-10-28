@@ -36,6 +36,10 @@ with recent history added: a trailing 30-minute (10-sample) mean and standard de
 within each run from past samples only (156 inputs). A window sweep (--hist-windows) then retrains the best
 30-minute settings of each of those families with other window lengths.
 
+After model selection: a learning curve (the best models retrained on fewer runs and sparser samples) and an
+end-to-end evaluation with 21 answers (no fault or faults 1-20): the two best models in a chain, and one model with
+the best diagnosis settings trained on all rows.
+
 Exports per model: score histograms (with the exact thresholds as bin edges), detection delays at several
 false-alarm rates plus a chance reference from fault-free runs, run-level bootstrap intervals, calibration
 (probability models) and score traces for one validation run per fault (run viewer). Results exported by an
@@ -45,6 +49,7 @@ Usage
   python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 100
   python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 100 --families tree,rf
   python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 0 --final-test   # all runs + test
+Every model trains on every time step by default (--det-stride / --diag-stride 1); the final test uses all test runs.
 
 Results are written to <out-dir>/outputs_<N>runs (or outputs_full): models_v3/ and web_data/ (website files).
 Finished models are skipped on re-runs, so an interrupted run can simply be restarted.
@@ -80,7 +85,7 @@ pd.set_option("display.max_columns", 30)
 pd.set_option("display.max_rows", 200)
 
 ALL_FAMILIES = ["logreg", "pcalr", "pcamon", "tree", "rf", "gb", "ada", "xgb"]
-HISTORY_CAPABLE = ["logreg", "tree", "rf", "gb", "ada", "xgb"]
+HISTORY_CAPABLE = ["logreg", "pcamon", "tree", "rf", "gb", "ada", "xgb"]
 
 # ---- Command-line settings -----------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="TEP fault detection and diagnosis pipeline")
@@ -93,14 +98,18 @@ parser.add_argument("--runs-per-fault", type=int, default=100,
                     help="use the first N runs of each fault type for train/val; 0 = all 500")
 parser.add_argument("--families", default=",".join(ALL_FAMILIES),
                     help=f"comma-separated model families to train (default: all of {','.join(ALL_FAMILIES)})")
-parser.add_argument("--history-families", default="logreg,rf,xgb",
+parser.add_argument("--history-families", default="logreg,pcamon,rf,xgb",
                     help="families also trained with 30-minute rolling mean/std inputs (empty string = none)")
-parser.add_argument("--det-stride", type=int, default=2, help="detection trains on every k-th time step")
-parser.add_argument("--diag-stride", type=int, default=5, help="diagnosis trains on every k-th time step")
+parser.add_argument("--det-stride", type=int, default=1, help="detection trains on every k-th time step (1 = all)")
+parser.add_argument("--diag-stride", type=int, default=1, help="diagnosis trains on every k-th time step (1 = all)")
 parser.add_argument("--selection-far", type=float, default=0.05,
                     help="false-alarm rate on validation normal rows used to set thresholds and pick the best model")
-parser.add_argument("--test-runs-per-fault", type=int, default=100,
-                    help="faulty test runs used per fault (the full faulty test file is ~10M rows)")
+parser.add_argument("--test-runs-per-fault", type=int, default=0,
+                    help="faulty test runs used per fault; 0 = all 500 (the full faulty test file is ~10M rows)")
+parser.add_argument("--learning-curve", default="1",
+                    help="1 = measure how the best models depend on the amount of training data; 0 = skip")
+parser.add_argument("--end-to-end", default="1",
+                    help="1 = evaluate detection + diagnosis together (two-stage chain and one 21-label model); 0 = skip")
 parser.add_argument("--hist-windows", default="2,5,20,40",
                     help="extra history windows (in 3-minute samples) for the window sweep; '' to skip it")
 parser.add_argument("--final-test", action="store_true", help="retrain the chosen models and evaluate on test")
@@ -133,13 +142,14 @@ C_GRID = [1e-6, 3e-6, 1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 1e-2]
 CLASS_WEIGHTS = [None, "balanced"]                     # detection only
 SELECTION_FAR = args.selection_far
 FAR_LEVELS = [0.01, 0.02, 0.05, 0.10, 0.20]            # detection delays are precomputed at these alarm rates
-CONSECUTIVE = 3           # alarms (or correct diagnoses) in a row needed to count as detected
+CONSECUTIVE = 3           # alarms (or correct diagnoses) in a row needed to count as detected (the headline rule)
+CONSECUTIVE_LEVELS = [1, 2, 3, 5, 10]   # also exported for the website's "in a row" slider; no retraining involved
 
 # Neighbouring 3-minute samples are nearly identical, so training on every k-th one cuts time with little loss.
 # Validation and test always use every row.
 DET_STRIDE = args.det_stride
 DIAG_STRIDE = args.diag_stride
-TEST_RUNS_PER_FAULT = args.test_runs_per_fault
+TEST_RUNS_PER_FAULT = args.test_runs_per_fault or None     # None = all test runs
 FORCE_RETRAIN = args.force_retrain
 
 # ---- Tree-based model grids ------------------------------------------------------------------------
@@ -312,16 +322,18 @@ def window_text(w):
     return f"{m}-min" if m < 60 else f"{m // 60}-hour" if m % 60 == 0 else f"{m / 60:g}-hour"
 
 
-def history_block(df, window, chunk_rows=200_000):
+def history_block(df, window, chunk_rows=200_000, out_mean=None, out_std=None):
     """Trailing rolling mean and std (ddof=1) of every reading over the last `window` samples of the same run,
     the current sample included. Matches pandas rolling(window, min_periods=1).mean() and
     rolling(window, min_periods=2).std().fillna(0). Computed with cumulative sums, whole runs at a time, in chunks,
-    so the full dataset fits in memory. df must be sorted by run and sample (it is)."""
+    so the full dataset fits in memory. df must be sorted by run and sample (it is). Writes into out_mean/out_std
+    when given (slices of a preallocated input array), which avoids extra copies."""
     x = df[FEATURES].to_numpy(np.float32)
     run = df["run_id"].to_numpy()
     starts = np.flatnonzero(np.r_[True, run[1:] != run[:-1]])          # first row of each run
     bounds = np.r_[starts, len(run)]
-    mean, std = np.empty_like(x), np.empty_like(x)
+    mean = out_mean if out_mean is not None else np.empty_like(x)
+    std = out_std if out_std is not None else np.empty_like(x)
     a = 0
     while a < len(run):
         b = bounds[np.searchsorted(bounds, a + chunk_rows, side="left")] if a + chunk_rows < len(run) else len(run)
@@ -344,18 +356,26 @@ def history_block(df, window, chunk_rows=200_000):
 
 
 def raw_inputs(df, fs):
+    """Unscaled inputs: the 52 readings, then (history sets) the 52 rolling means and the 52 rolling std devs."""
     x = df[FEATURES].to_numpy(np.float32)
-    return x if fs == "inst" else np.hstack([x, *history_block(df, window_of(fs))])
+    if fs == "inst":
+        return x
+    k = len(FEATURES)
+    out = np.empty((len(df), 3 * k), dtype=np.float32)
+    out[:, :k] = x
+    history_block(df, window_of(fs), out_mean=out[:, k:2 * k], out_std=out[:, 2 * k:])
+    return out
 
 
 def build_inputs(fs):
-    """Standardized training (kept rows only) and validation inputs for one input set; scaler fitted on training."""
+    """Standardized training (kept rows only) and validation inputs for one input set; scaler fitted on training.
+    Scaling is done in place (copy=False) so the full dataset needs one copy of each array, not three."""
     t0 = time.time()
     raw = raw_inputs(train_df, fs)
-    scalers[fs] = StandardScaler().fit(raw)
-    X_train[fs] = scalers[fs].transform(raw[keep_rows]).astype(np.float32)
+    scalers[fs] = StandardScaler(copy=False).fit(raw)
+    X_train[fs] = scalers[fs].transform(raw if keep_rows.all() else raw[keep_rows])
     del raw
-    X_val[fs] = scalers[fs].transform(raw_inputs(val_df, fs)).astype(np.float32)
+    X_val[fs] = scalers[fs].transform(raw_inputs(val_df, fs))
     print(f"Inputs '{fs}': {X_train[fs].shape[1]} columns ({time.time() - t0:.0f}s)", flush=True)
 
 
@@ -370,7 +390,7 @@ normal_in_keep = (train_df.loc[keep_rows, "faultNumber"] == 0).to_numpy()   # fa
 def task_data(task, fs):
     """(training inputs, training labels, validation inputs) for one task and input set."""
     if task == "detection":
-        return X_train[fs][det_in_keep], y_det, X_val[fs]
+        return (X_train[fs] if det_in_keep.all() else X_train[fs][det_in_keep]), y_det, X_val[fs]
     return X_train[fs][diag_in_keep], y_diag, X_val[fs][val_post]
 
 
@@ -490,22 +510,38 @@ def diagnosis_metrics(y_true, y_pred):
     }, cm, recall
 
 
-def streak_delays(run_ids, faults, samples, flags, onset, k=CONSECUTIVE):
-    """Per fault type: median minutes until k consecutive flags after `onset`, and share of runs where it happens.
-    Fault-free runs (fault 0) are included, measured as if a fault had started at `onset`. Rows must be sorted
-    by run and sample (they are)."""
+def streak_delays(run_ids, faults, samples, flags, onset, ks=(CONSECUTIVE,)):
+    """Per fault type: median minutes until k consecutive flags after `onset`, and share of runs where it happens,
+    for every k in `ks` at once. Returns {k: table}. Fault-free runs (fault 0) are included, measured as if a fault
+    had started at `onset`. Rows must be sorted by run and sample (they are).
+
+    The length of the current streak of flags is computed for every row in one pass: the distance to the last row
+    that was not flagged (or to the start of the run). A run reaches k in a row at the first row where it is >= k."""
     flags = flags & (samples > onset)
-    cs = np.concatenate([[0], np.cumsum(flags)])
     idx = np.arange(len(flags))
-    start = np.maximum(idx - k + 1, 0)
-    streak = (idx - k + 1 >= 0) & (run_ids[start] == run_ids) & (cs[idx + 1] - cs[start] == k)
-    per_run = pd.DataFrame({
-        "run": run_ids, "fault": faults,
-        "minutes": np.where(streak, (samples - onset) * SAMPLE_MINUTES, np.nan),
-    }).groupby("run").agg(fault=("fault", "first"), minutes=("minutes", "min"))
-    out = per_run.groupby("fault")["minutes"].agg(median_minutes="median", detected="count", runs="size")
-    out["detected_share"] = out["detected"] / out["runs"]
-    return out[["median_minutes", "detected_share"]]
+    run_start = np.r_[True, run_ids[1:] != run_ids[:-1]]
+    breaks = np.maximum(np.where(~flags, idx, -1), np.where(run_start, idx - 1, -1))
+    streak = idx - np.maximum.accumulate(breaks)               # 0 on unflagged rows, 1, 2, 3, ... along a streak
+    minutes = (samples - onset) * SAMPLE_MINUTES
+    frame = pd.DataFrame({"run": run_ids, "fault": faults,
+                          **{f"k{k}": np.where(streak >= k, minutes, np.nan) for k in ks}})
+    per_run = frame.groupby("run", sort=False).agg(fault=("fault", "first"), **{f"k{k}": (f"k{k}", "min") for k in ks})
+    out = {}
+    for k in ks:
+        t = per_run.groupby("fault")[f"k{k}"].agg(median_minutes="median", detected="count", runs="size")
+        t["detected_share"] = t["detected"] / t["runs"]
+        out[k] = t[["median_minutes", "detected_share"]]
+    return out
+
+
+def delays_by_k(run_ids, faults, samples, flags, onset):
+    """Delays for every level of CONSECUTIVE_LEVELS: {"by_fault", "reference"} for the headline rule, plus "by_k"."""
+    tables = streak_delays(run_ids, faults, samples, flags, onset, CONSECUTIVE_LEVELS)
+    by_k = {}
+    for k, t in tables.items():
+        by_fault, reference = delays_to_json(t)
+        by_k[str(k)] = {"by_fault": by_fault, "reference": reference}
+    return {**by_k[str(CONSECUTIVE)], "by_k": by_k}
 
 
 def delays_to_json(table):
@@ -677,7 +713,7 @@ PARAM_TAGS = {"depth": "d", "trees": "t", "rounds": "r", "k": "k"}
 
 def unit_id(task, family, params, fs):
     if family == "pcamon":
-        return f"{task}_pcamon_{params['stat'].lower()}_k{params['k']}"
+        return f"{task}_pcamon_{params['stat'].lower()}_k{params['k']}" + HIST_TAG[fs]
     return f"{task}_{family}_" + "_".join(f"{PARAM_TAGS[k]}{v}" for k, v in params.items()) + HIST_TAG[fs]
 
 
@@ -889,9 +925,8 @@ def export_detection(mid, label, family, params, scores, fit_seconds, explain, f
     for far in FAR_LEVELS:
         t = threshold_at_far(y_val, scores, far)
         thresholds.append(t)
-        by_fault, reference = delays_to_json(streak_delays(
-            val_df["run_id"].to_numpy(), faults_val, val_df["sample"].to_numpy(), scores >= t, FAULT_ONSET["train"]))
-        delays[str(far)] = {"threshold": t, "by_fault": by_fault, "reference": reference}
+        delays[str(far)] = {"threshold": t, **delays_by_k(val_df["run_id"].to_numpy(), faults_val,
+                                                          val_df["sample"].to_numpy(), scores >= t, FAULT_ONSET["train"])}
     extra = dict(extra or {})
     score_kind = extra.pop("score_kind", "prob")
     summary = {"id": mid, "family": family, "label": label, "params": params, "features": fs,
@@ -911,13 +946,15 @@ def export_detection(mid, label, family, params, scores, fit_seconds, explain, f
 def export_diagnosis(mid, label, family, params, pred, fit_seconds, explain, fs="inst", extra=None):
     true = faults_val[val_post]
     metrics, cm, recall = diagnosis_metrics(true, pred)
-    by_fault, _ = delays_to_json(streak_delays(val_df["run_id"].to_numpy()[val_post], true,
-                                               val_df["sample"].to_numpy()[val_post], pred == true, FAULT_ONSET["train"]))
+    d = delays_by_k(val_df["run_id"].to_numpy()[val_post], true, val_df["sample"].to_numpy()[val_post], pred == true,
+                    FAULT_ONSET["train"])
     summary = {"id": mid, "family": family, "label": label, "params": params, "features": fs,
                "n_inputs": len(INPUT_NAMES[fs]), "fit_seconds": round(fit_seconds, 1), "val": metrics,
                "ci": None if family == "baseline" else bootstrap_diagnosis(pred),
                "coef_nonzero": (explain or {}).get("nonzero"), "export_version": EXPORT_VERSION, **(extra or {})}
-    payload = {"summary": summary, "val": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall, "delays": by_fault}}
+    payload = {"summary": summary, "val": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall,
+                                           "delays": d["by_fault"],
+                                           "delays_by_k": {k: v["by_fault"] for k, v in d["by_k"].items()}}}
     payload["coefficients" if family in ("logreg", "baseline", "pcalr") else "importances"] = explain
     write_json(WEB_DIR / "diagnosis" / f"{mid}.json", payload)
     print(f"{mid:48s} macro-F1={metrics['macro_F1']:.3f}  ({fit_seconds:.0f}s)", flush=True)
@@ -1004,7 +1041,7 @@ def run_family(task, family, fs="inst"):
             if not train_this:
                 summaries += [o for o in olds if o is not None]
                 continue
-            _, checkpoints = pcamon_checkpoints(Xv, X_train["inst"][normal_in_keep], 0.0)
+            _, checkpoints = pcamon_checkpoints(Xv, X_train[fs][normal_in_keep], 0.0)
         else:
             name = f"{task}_pcalr_k{unit}" if family == "pcalr" else f"{task}_{family}_d{unit}{HIST_TAG[fs]}"
             model_path = MODEL_DIR / f"{name}.joblib"
@@ -1067,6 +1104,8 @@ def fit_with_params(task, family, params, X, y):
         return make_lr(params["penalty"], params["C"], cw, multiclass=(task == "diagnosis")).fit(X, y)
     if family == "pcalr":
         return fit_pcalr(task, params["k"], X, y)
+    if family == "pcamon":
+        raise ValueError("PCA monitoring is fitted on fault-free rows: use pca_monitor_fit")
     model = build_tree_model(task, family, params)
     if family == "ada":
         X, y = subsample(X, y, ADA_SAMPLE)
@@ -1151,6 +1190,21 @@ def run_sweep():
             task, family, p = j["task"], j["family"], j["params"]
             X, y, Xv = task_data(task, fs)
             path = MODEL_DIR / f"{j['id']}.joblib"
+            # Training faults start after sample 20 (1 hour). A longer window is still partly empty when a fault
+            # starts in training and validation, but full in the test files (fault after 8 hours), so validation
+            # flatters it. Such windows are shown on the website but not used to pick the best model.
+            extra = {"sweep_of": j["base"]["id"], "hist_window": w, "selectable": w <= FAULT_ONSET["train"]}
+            if family == "pcamon":
+                # Cheap: refit on the fault-free rows and keep the checkpoint with these settings.
+                if family not in FAMILIES:
+                    if old is not None:
+                        det_summaries.append(old)
+                    continue
+                _, cps = pcamon_checkpoints(Xv, X_train[fs][normal_in_keep], 0.0)
+                c = next(c for c in cps if c["params"] == p)
+                det_summaries.append(describe(export_detection(j["id"], j["label"], family, p, c["output"], c["secs"], None,
+                                                               fs, extra={**c["extra"], **extra})))
+                continue
             if path.exists() and not forced(family) and old is not None:
                 model, secs = joblib.load(path), old.get("fit_seconds", 0.0)
             elif family in FAMILIES:
@@ -1163,10 +1217,6 @@ def run_sweep():
                     (det_summaries if task == "detection" else diag_summaries).append(old)
                 continue
             explain = final_explain({"family": family}, model, INPUT_NAMES[fs])
-            # Training faults start after sample 20 (1 hour). A longer window is still partly empty when a fault
-            # starts in training and validation, but full in the test files (fault after 8 hours), so validation
-            # flatters it. Such windows are shown on the website but not used to pick the best model.
-            extra = {"sweep_of": j["base"]["id"], "hist_window": w, "selectable": w <= FAULT_ONSET["train"]}
             if family == "logreg":
                 extra.update({"penalty": p["penalty"], "C": p["C"],
                               **({"class_weight": p.get("class_weight", "none")} if task == "detection" else {})})
@@ -1204,6 +1254,263 @@ print("\nBest diagnosis model per family and input set (macro-F1):")
 grp = diag_candidates.groupby(["family", "inputs"])["macro_F1"].idxmax()
 print(diag_candidates.loc[grp].sort_values("macro_F1", ascending=False).round(4))
 print("Best diagnosis model:", best_diag["label"])
+
+# ====================================================================================================
+# ## 7b. Helpers for the chosen models
+# `saved_output` recomputes a model's output from the model saved during training (no retraining): forests and
+# boosted models are read off at their own size, exactly as during validation.
+
+def ensure_inputs(fs):
+    if fs not in X_train:
+        build_inputs(fs)
+
+
+def load_saved(name):
+    path = MODEL_DIR / f"{name}.joblib"
+    return joblib.load(path) if path.exists() else None
+
+
+def proba_and_classes(family, model, X):
+    if family == "pcalr":
+        return model["lr"].predict_proba(model["pca"].transform(X)), model["lr"].classes_
+    return model.predict_proba(X), getattr(model, "tep_classes_", getattr(model, "classes_", None))
+
+
+def saved_output(task, summary, X):
+    """Validation-stage output of a model on new inputs X: detection score per row, or predicted fault per row."""
+    fam, p, fs = summary["family"], summary["params"], summary.get("features", "inst")
+    if fam == "pcamon":
+        return final_scores(task, summary, pca_monitor_fit(X_train[fs][normal_in_keep]), X)
+    if summary.get("sweep_of") or fam in ("logreg", "baseline"):
+        model = load_saved(summary["id"])
+    elif fam == "pcalr":
+        model = load_saved(f"{task}_pcalr_k{p['k']}")
+    else:
+        model = load_saved(f"{task}_{fam}_d{p['depth']}{HIST_TAG[fs]}")
+    if model is None:                                    # not on disk (e.g. results copied from elsewhere): refit
+        Xt, yt, _ = task_data(task, fs)
+        return final_scores(task, summary, fit_with_params(task, fam, p, Xt, yt), X)
+    if summary.get("sweep_of") or fam in ("logreg", "baseline", "pcalr", "tree"):
+        return final_scores(task, summary, model, X)
+    if fam == "rf":
+        k = p["trees"]
+        proba = sum(est.predict_proba(X) for est in model.estimators_[:k]) / k
+        return task_output(task, proba, model.classes_)
+    if fam == "gb":
+        proba = next(pp for i, pp in enumerate(model.staged_predict_proba(X), start=1) if i == p["rounds"])
+        return task_output(task, proba, model.classes_)
+    if fam == "ada":
+        stop = min(p["rounds"], len(model.estimators_))
+        proba = next(pp for i, pp in enumerate(model.staged_predict_proba(X), start=1) if i == stop)
+        return task_output(task, proba, model.classes_)
+    if fam == "xgb":
+        classes = getattr(model, "tep_classes_", FAULTS if task == "diagnosis" else np.array([0, 1]))
+        return task_output(task, model.predict_proba(X, iteration_range=(0, p["rounds"])), classes)
+    raise ValueError(fam)
+
+
+# ====================================================================================================
+# ## 7c. How much training data matters (learning curve)
+# The best detection and diagnosis models are retrained, with their chosen settings, on less data along two axes:
+#   - share of the training simulation runs (5% ... 100%): each run is a new random disturbance pattern;
+#   - sampling density inside the runs (every 20th ... every time step): neighbouring samples are 3 min apart.
+# Each point is scored on the full validation set exactly like the original. Results are saved as they finish,
+# so an interrupted run resumes.
+
+LC_RUN_SHARES = [0.05, 0.1, 0.25, 0.5, 1.0]
+LC_STRIDES = [20, 10, 5, 2, 1]
+LC_PATH = WEB_DIR / "learning_curve.json"
+
+
+def lc_point(task, summary, rows, secs_hint=None):
+    """Retrain `summary`'s settings on the training rows in `rows` (mask over the task's training rows), score it."""
+    fam, p, fs = summary["family"], summary["params"], summary.get("features", "inst")
+    X, y, Xv = task_data(task, fs)
+    t0 = time.time()
+    if fam == "pcamon":
+        normal = (train_df.loc[keep_rows, "faultNumber"].to_numpy() == 0)[det_in_keep] if task == "detection" else None
+        model = pca_monitor_fit(X[rows & normal])
+    else:
+        model = fit_with_params(task, fam, p, X[rows], y[rows])
+    secs = time.time() - t0
+    out = final_scores(task, summary, model, Xv)
+    if task == "detection":
+        m = detection_metrics(y_val, out, threshold_at_far(y_val, out, SELECTION_FAR))
+        return {"metric": m["recall"], "roc_auc": m["ROC_AUC"], "far": 1 - m["normal_recall"],
+                "ci": bootstrap_detection(out, m["threshold"])["recall"], "rows": int(rows.sum()), "fit_seconds": secs}
+    m, _, _ = diagnosis_metrics(faults_val[val_post], out)
+    return {"metric": m["macro_F1"], "accuracy": m["accuracy"], "ci": bootstrap_diagnosis(out)["macro_F1"],
+            "rows": int(rows.sum()), "fit_seconds": secs}
+
+
+def run_learning_curve():
+    done = json.loads(LC_PATH.read_text()) if LC_PATH.exists() else {}
+    rng = np.random.default_rng(SEED)
+    train_sims = np.sort(train_df["simulationRun"].unique())
+    order = rng.permutation(train_sims)                       # nested subsets: 5% is inside 10%, and so on
+    for task, summary in (("detection", best_det), ("diagnosis", best_diag)):
+        fs = summary.get("features", "inst")
+        res = done.get(task, {})
+        if res.get("model") != summary["id"]:
+            res = {"model": summary["id"], "label": summary["label"], "runs": {}, "stride": {}}
+        rows_of = det_rows if task == "detection" else diag_rows
+        sims = train_df.loc[rows_of, "simulationRun"].to_numpy()
+        samples = train_df.loc[rows_of, "sample"].to_numpy()
+        base_stride = DET_STRIDE if task == "detection" else DIAG_STRIDE
+        key = "recall" if task == "detection" else "macro_F1"
+        full_point = {"metric": summary["val"][key], "roc_auc": summary["val"].get("ROC_AUC"),
+                      "accuracy": summary["val"].get("accuracy"), "ci": (summary.get("ci") or {}).get(key),
+                      "rows": int(rows_of.sum()), "fit_seconds": summary.get("fit_seconds")}
+        for share in LC_RUN_SHARES:
+            n = max(1, int(round(share * len(train_sims))))
+            k = f"{share:g}"
+            if k in res["runs"]:
+                continue
+            if n == len(train_sims):
+                res["runs"][k] = {**full_point, "sims": n}
+            else:
+                ensure_inputs(fs)
+                res["runs"][k] = {**lc_point(task, summary, np.isin(sims, order[:n])), "sims": n}
+            print(f"learning curve {task} runs {share:>5.0%}: {res['runs'][k]['metric']:.4f}", flush=True)
+            done[task] = res
+            write_json(LC_PATH, done)
+        for stride in LC_STRIDES:
+            k = str(stride)
+            if k in res["stride"]:
+                continue
+            if stride == base_stride:
+                res["stride"][k] = dict(full_point)
+            else:
+                ensure_inputs(fs)
+                res["stride"][k] = lc_point(task, summary, samples % stride == 0)
+            print(f"learning curve {task} every {stride:>2} samples: {res['stride'][k]['metric']:.4f}", flush=True)
+            done[task] = res
+            write_json(LC_PATH, done)
+        res["train_sims"] = int(len(train_sims))
+        done[task] = res
+        write_json(LC_PATH, done)
+    return done
+
+
+# ====================================================================================================
+# ## 7d. Detection and diagnosis together (end to end)
+# Every row gets one of 21 labels: 0 = no fault, or the fault number. Two ways, scored the same way:
+#   chain:  the best detection model raises an alarm (its 5% threshold); if it does, the best diagnosis model
+#           names the fault, otherwise the answer is "no fault". No new training.
+#   single: ONE model, with the best diagnosis model's settings, trained on all rows with 21 labels. To compare at
+#           the same false alarm rate, it alarms when 1 - P(no fault) passes a threshold set for 5% false alarms on
+#           validation, then names its most likely fault. Its plain "most likely label" answer is reported too.
+
+LABELS21 = np.arange(0, 21)
+E2E_PATH = WEB_DIR / "end_to_end.json"
+
+
+def e2e_metrics(true21, pred21, run_ids, samples, onset):
+    """21-label scores, false alarms, faults caught, and the time to the right label (k in a row) per fault."""
+    cm = confusion_matrix(true21, pred21, labels=LABELS21)
+    rec = recall_score(true21, pred21, labels=LABELS21, average=None, zero_division=0)
+    normal, faulty = true21 == 0, true21 > 0
+    faults = run_ids // 1000
+    flags = np.where(faults > 0, pred21 == faults, pred21 != 0)     # fault-free runs: any fault label = a chance hit
+    codes, uniq = pd.factorize(run_ids)
+    run_fault_ = (uniq // 1000).astype(int)
+    per_run = np.zeros((len(uniq), 21, 21))
+    np.add.at(per_run, (codes, true21, pred21), 1)
+    rng = np.random.default_rng(SEED)
+    cms = np.zeros((BOOTSTRAP, 21, 21))
+    for f in np.unique(run_fault_):
+        idx = np.flatnonzero(run_fault_ == f)
+        cms += per_run[idx][rng.integers(0, len(idx), (BOOTSTRAP, len(idx)))].sum(axis=1)
+    tp = np.diagonal(cms, axis1=1, axis2=2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        prec = np.where(cms.sum(1) > 0, tp / cms.sum(1), 0.0)
+        r = np.where(cms.sum(2) > 0, tp / cms.sum(2), 0.0)
+        f1 = np.where(prec + r > 0, 2 * prec * r / (prec + r), 0.0)
+    ci = lambda a: [float(np.percentile(a, 2.5)), float(np.percentile(a, 97.5))]
+    return {
+        "macro_F1": f1_score(true21, pred21, labels=LABELS21, average="macro", zero_division=0),
+        "accuracy": float((true21 == pred21).mean()),
+        "false_alarm_rate": float((pred21[normal] != 0).mean()),
+        "faults_caught": float((pred21[faulty] != 0).mean()),
+        "right_fault": float((pred21[faulty] == true21[faulty]).mean()),
+        "ci": {"macro_F1": ci(f1.mean(axis=1)), "accuracy": ci(tp.sum(1) / cms.sum((1, 2)))},
+        "confusion_matrix": cm, "recall": rec,
+        "delays": delays_by_k(run_ids, faults, samples, flags, onset),
+    }
+
+
+def single_rows():
+    """Training rows and 21 labels for the single model: every detection training row, 0 = no fault."""
+    sub = train_df.loc[det_rows]
+    return np.where(sub["target"].to_numpy() == 1, sub["faultNumber"].to_numpy(), 0)
+
+
+def single_predict(model, family, X, threshold=None):
+    proba, classes = proba_and_classes(family, model, X)
+    classes = np.asarray(classes)
+    fault_score = 1.0 - proba[:, np.flatnonzero(classes == 0)[0]]
+    faults_only = proba.copy()
+    faults_only[:, classes == 0] = -1
+    fault_pick = classes[np.argmax(faults_only, axis=1)]
+    argmax = classes[np.argmax(proba, axis=1)]
+    return fault_score, fault_pick, argmax
+
+
+def run_end_to_end():
+    fs_d, fs_g = best_det.get("features", "inst"), best_diag.get("features", "inst")
+    run_ids, samples = val_df["run_id"].to_numpy(), val_df["sample"].to_numpy()
+    true21 = np.where(y_val == 1, faults_val, 0)
+    # Chain
+    ensure_inputs(fs_d)
+    det_scores = saved_output("detection", best_det, X_val[fs_d])
+    alarm = det_scores >= best_det["val"]["threshold"]
+    ensure_inputs(fs_g)
+    diag_all = saved_output("diagnosis", best_diag, X_val[fs_g])
+    chain = e2e_metrics(true21, np.where(alarm, diag_all, 0).astype(int), run_ids, samples, FAULT_ONSET["train"])
+    print(f"END TO END chain:  macro-F1 (21 labels) {chain['macro_F1']:.4f}  false alarms {chain['false_alarm_rate']:.3f}", flush=True)
+    # Single 21-label model with the best diagnosis settings
+    fam, p = best_diag["family"], best_diag["params"]
+    name = f"e2e_single_{best_diag['id']}"
+    model = load_saved(name)
+    t0 = time.time()
+    if model is None:
+        X, _, _ = task_data("detection", fs_g)
+        model = fit_with_params("diagnosis", fam, p, X, single_rows())
+        joblib.dump(model, MODEL_DIR / f"{name}.joblib", compress=3)
+    secs = time.time() - t0
+    fault_score, fault_pick, argmax = single_predict(model, fam, X_val[fs_g])
+    t_single = threshold_at_far(y_val, fault_score, SELECTION_FAR)
+    single = e2e_metrics(true21, np.where(fault_score >= t_single, fault_pick, 0).astype(int), run_ids, samples,
+                         FAULT_ONSET["train"])
+    single_argmax = e2e_metrics(true21, argmax.astype(int), run_ids, samples, FAULT_ONSET["train"])
+    single["threshold"] = t_single
+    single["detection"] = detection_metrics(y_val, fault_score, t_single)
+    print(f"END TO END single: macro-F1 (21 labels) {single['macro_F1']:.4f}  false alarms {single['false_alarm_rate']:.3f}", flush=True)
+    out = {"labels": LABELS21,
+           "models": {"detection": best_det["id"], "diagnosis": best_diag["id"],
+                      "detection_label": best_det["label"], "diagnosis_label": best_diag["label"],
+                      "single_settings": best_diag["label"], "single_fit_seconds": secs},
+           "val": {"chain": chain, "single": single, "single_argmax": single_argmax}}
+    old = json.loads(E2E_PATH.read_text()) if E2E_PATH.exists() else {}
+    if old.get("models", {}).get("diagnosis") == best_diag["id"] and old.get("models", {}).get("detection") == best_det["id"]:
+        out["test"] = old.get("test")                            # keep an earlier test result for the same models
+    write_json(E2E_PATH, out)
+    return model, t_single
+
+
+def e2e_summary(e2e):
+    """The headline numbers for the manifest (the full matrices stay in end_to_end.json)."""
+    if not e2e:
+        return None
+    pick = lambda d: {k: d[k] for k in ("macro_F1", "accuracy", "false_alarm_rate", "faults_caught", "right_fault", "ci")}
+    out = {"models": e2e["models"], "val": {k: pick(v) for k, v in e2e["val"].items()}}
+    if e2e.get("test"):
+        out["test"] = {k: pick(v) for k, v in e2e["test"].items()}
+    return out
+
+
+learning_curve = run_learning_curve() if args.learning_curve == "1" else None
+single_model, single_threshold = run_end_to_end() if args.end_to_end == "1" else (None, None)
 
 # ====================================================================================================
 # ## 8. Data summary and manifest
@@ -1257,12 +1564,12 @@ def write_manifest(test_results=None):
             "fault_onset": FAULT_ONSET, "sample_minutes": SAMPLE_MINUTES,
         },
         "settings": {"split": "simulation_number", "C_grid": C_GRID, "class_weights": [c or "none" for c in CLASS_WEIGHTS],
-                     "selection_far": SELECTION_FAR, "far_levels": FAR_LEVELS, "consecutive": CONSECUTIVE,
+                     "selection_far": SELECTION_FAR, "far_levels": FAR_LEVELS, "consecutive": CONSECUTIVE, "consecutive_levels": CONSECUTIVE_LEVELS,
                      "det_stride": DET_STRIDE, "diag_stride": DIAG_STRIDE, "rf_sample": RF_SAMPLE,
                      "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2,
                      "hist_window": HIST_WINDOW, "hist_windows": sorted([HIST_WINDOW] + SWEEP_WINDOWS), "bootstrap": BOOTSTRAP, "pcamon_alpha": PCAMON_ALPHA,
                      "export_version": EXPORT_VERSION, "inputs": {k: len(v) for k, v in INPUT_NAMES.items()},
-                     "trace_runs": TRACE_RUNS},
+                     "trace_runs": TRACE_RUNS, "lc_run_shares": LC_RUN_SHARES, "lc_strides": LC_STRIDES},
         "families": [{"key": f, **FAMILY_INFO[f]} for f in present],
         "detection": {"models": det_summaries, "best": best_det_id,
                       "best_by_family": best_by_family(det_summaries, "recall"),
@@ -1271,6 +1578,8 @@ def write_manifest(test_results=None):
                       "best_by_family": best_by_family(diag_summaries, "macro_F1"),
                       "selection_rule": "highest validation macro-F1"},
         "test": test_results,
+        "learning_curve": json.loads(LC_PATH.read_text()) if LC_PATH.exists() else None,
+        "end_to_end": e2e_summary(json.loads(E2E_PATH.read_text())) if E2E_PATH.exists() else None,
     })
 
 
@@ -1313,95 +1622,136 @@ def fit_final(task, summary, X, y, X_normal=None):
 
 
 if args.final_test:
+    import gc
     full_df = pd.concat([train_df, val_df]).sort_values(["run_id", "sample"], ignore_index=True)
     test_normal = load_tep("TEP_FaultFree_Testing")
     test_faulty = load_tep("TEP_Faulty_Testing")
-    test_faulty = test_faulty[test_faulty["simulationRun"] <= TEST_RUNS_PER_FAULT]
+    if TEST_RUNS_PER_FAULT:
+        test_faulty = test_faulty[test_faulty["simulationRun"] <= TEST_RUNS_PER_FAULT]
     test_df = prepare(test_normal, test_faulty, FAULT_ONSET["test"])
     del test_normal, test_faulty
     y_test = test_df["target"].to_numpy()
     faults_test = test_df["faultNumber"].to_numpy()
     runs_test, samples_test = test_df["run_id"].to_numpy(), test_df["sample"].to_numpy()
     test_post = y_test == 1
+    true21_test = np.where(test_post, faults_test, 0)
     test_copies = int(np.isin(row_hashes(test_df), row_hashes(full_df)).sum())
-    print("Test rows identical to a training row:", test_copies)
+    print("Test rows:", len(test_df), " identical to a training row:", test_copies, flush=True)
     test_results = {"rows": int(len(test_df)), "fault_share": float(y_test.mean()), "rows_copied_from_train": test_copies,
-                    "runs_per_fault": TEST_RUNS_PER_FAULT, "detection": {}, "diagnosis": {}}
+                    "runs_per_fault": TEST_RUNS_PER_FAULT or int(test_df.loc[test_post, "simulationRun"].nunique()),
+                    "detection": {}, "diagnosis": {}}
 
     chosen = [("detection", best_det), ("detection", next(s for s in det_summaries if s["family"] == "baseline")),
               ("diagnosis", best_diag), ("diagnosis", next(s for s in diag_summaries if s["family"] == "baseline"))]
-    # The chosen models exactly as validated (trained on the training runs only), on test with their validation
-    # threshold. This is the model the threshold was set for, so its test false alarm rate shows how well the 5%
-    # carries over; the retrained models below are the headline result.
+    fs_of = lambda summary: summary.get("features", "inst")
+    input_sets = sorted({fs_of(s) for _, s in chosen})
+    do_e2e = args.end_to_end == "1" and single_model is not None
+    e2e_test = {}
+
+    # --- A. The chosen models exactly as validated (trained on the training runs only), on test with their
+    # validation threshold. This is the model the threshold was set for, so its test false alarm rate shows how
+    # well the 5% carries over. Uses the saved models, so nothing is retrained here.
     test_results["as_validated"] = {"detection": {}, "diagnosis": {}}
-    for task, summary in chosen:
-        if summary["family"] == "baseline":
-            continue
-        fs = summary.get("features", "inst")
-        if fs not in X_train:
-            build_inputs(fs)
-        if summary["family"] == "pcamon":
-            model = pca_monitor_fit(X_train["inst"][normal_in_keep])
-        else:
-            X, y, _ = task_data(task, fs)
-            model = fit_with_params(task, summary["family"], summary["params"], X, y)
-            del X
-        X_test_v = scalers[fs].transform(raw_inputs(test_df, fs)).astype(np.float32)
-        if task == "detection":
-            m = detection_metrics(y_test, final_scores(task, summary, model, X_test_v), summary["val"]["threshold"])
-        else:
-            m, _, _ = diagnosis_metrics(faults_test[test_post], final_scores(task, summary, model, X_test_v[test_post]))
-        test_results["as_validated"][task][summary["id"]] = m
-        print(f"TEST (as validated) {summary['label']:45s}", {k: round(v, 4) for k, v in m.items() if not isinstance(v, int)})
-        del model, X_test_v
+    av = {}
+    for fs in input_sets:
+        ensure_inputs(fs)
+        X_tv = scalers[fs].transform(raw_inputs(test_df, fs))
+        for task, summary in chosen:
+            if fs_of(summary) != fs or summary["family"] == "baseline":
+                continue
+            av[task] = saved_output(task, summary, X_tv)
+            if task == "detection":
+                m = detection_metrics(y_test, av[task], summary["val"]["threshold"])
+            else:
+                m, _, _ = diagnosis_metrics(faults_test[test_post], av[task][test_post])
+            test_results["as_validated"][task][summary["id"]] = m
+            print(f"TEST (as validated) {summary['label']:45s}", {k: round(v, 4) for k, v in m.items() if not isinstance(v, int)}, flush=True)
+        if do_e2e and fs == fs_of(best_diag):
+            av_single = single_predict(single_model, best_diag["family"], X_tv)
+        del X_tv
+        gc.collect()
+    if do_e2e:
+        chain_pred = np.where(av["detection"] >= best_det["val"]["threshold"], av["diagnosis"], 0).astype(int)
+        e2e_test["chain_as_validated"] = e2e_metrics(true21_test, chain_pred, runs_test, samples_test, FAULT_ONSET["test"])
+        fs_score, fs_pick, _ = av_single
+        e2e_test["single_as_validated"] = e2e_metrics(true21_test, np.where(fs_score >= single_threshold, fs_pick, 0).astype(int),
+                                                      runs_test, samples_test, FAULT_ONSET["test"])
+    del av
 
-    # Free the training/validation inputs first: on the full dataset memory is the limit here.
+    # --- B. Retrain the chosen models on all training runs (train + validation) and evaluate once.
+    # Training inputs are freed first and scaling is done in place: memory is the limit on the full dataset.
     X_train.clear(); X_val.clear()
-    import gc; gc.collect()
-    final_inputs = {}
-    for fs in {s.get("features", "inst") for _, s in chosen}:
+    gc.collect()
+    final = {}
+    for fs in input_sets:
         raw_full = raw_inputs(full_df, fs)
-        sc = StandardScaler(copy=False).fit(raw_full)               # transform in place (float32 stays float32)
-        raw_test = raw_inputs(test_df, fs)
-        final_inputs[fs] = (sc.transform(raw_full), sc.transform(raw_test))
-        del raw_full, raw_test
+        sc = StandardScaler(copy=False).fit(raw_full)
+        X_all = sc.transform(raw_full)
+        del raw_full
+        X_test = sc.transform(raw_inputs(test_df, fs))
+        det_fit = (full_df["sample"] % DET_STRIDE == 0).to_numpy()
+        for task, summary in chosen:
+            if fs_of(summary) != fs:
+                continue
+            if task == "detection":
+                X_fit, y_fit = X_all[det_fit], full_df.loc[det_fit, "target"].to_numpy()
+            else:
+                rows = ((full_df["target"] == 1) & (full_df["sample"] % DIAG_STRIDE == 0)).to_numpy()
+                X_fit, y_fit = X_all[rows], full_df.loc[rows, "faultNumber"].to_numpy()
+            X_normal = X_all[(full_df["faultNumber"] == 0).to_numpy()] if summary["family"] == "pcamon" else None
+            model = fit_final(task, summary, X_fit, y_fit, X_normal)
+            del X_fit, X_normal
+            explain = final_explain(summary, model, INPUT_NAMES[fs])
+            key = "coefficients" if summary["family"] in ("logreg", "baseline", "pcalr") else "importances"
+            if task == "detection":
+                scores = final_scores(task, summary, model, X_test)
+                threshold = summary["val"]["threshold"]                    # chosen on validation
+                metrics = detection_metrics(y_test, scores, threshold)
+                test_results["detection"][summary["id"]] = metrics
+                if summary["id"] == best_det["id"]:
+                    final["detection"] = scores
+                write_json(WEB_DIR / "detection" / f"test_{summary['id']}.json", {
+                    "summary": {**summary, "test": metrics}, key: explain,
+                    "test": {**score_histograms(y_test, scores, faults_test, [threshold]),
+                             "delays": {"validation_threshold": {"threshold": threshold,
+                                        **delays_by_k(runs_test, faults_test, samples_test, scores >= threshold,
+                                                      FAULT_ONSET["test"])}}}})
+            else:
+                pred_all = final_scores(task, summary, model, X_test)
+                pred, true = pred_all[test_post], faults_test[test_post]
+                metrics, cm, recall = diagnosis_metrics(true, pred)
+                test_results["diagnosis"][summary["id"]] = metrics
+                if summary["id"] == best_diag["id"]:
+                    final["diagnosis"] = pred_all
+                d = delays_by_k(runs_test[test_post], true, samples_test[test_post], pred == true, FAULT_ONSET["test"])
+                write_json(WEB_DIR / "diagnosis" / f"test_{summary['id']}.json", {
+                    "summary": {**summary, "test": metrics}, key: explain,
+                    "test": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall, "delays": d["by_fault"],
+                             "delays_by_k": {k: v["by_fault"] for k, v in d["by_k"].items()}}})
+            print(f"TEST {summary['label']:45s}", {k: round(v, 4) for k, v in metrics.items() if not isinstance(v, int)}, flush=True)
+            del model
+        if do_e2e and fs == fs_of(best_diag):
+            # The single 21-label model, retrained on all training runs with the same settings.
+            y21 = np.where(full_df.loc[det_fit, "target"].to_numpy() == 1, full_df.loc[det_fit, "faultNumber"].to_numpy(), 0)
+            single_final = fit_with_params("diagnosis", best_diag["family"], best_diag["params"], X_all[det_fit], y21)
+            joblib.dump(single_final, MODEL_DIR / f"final_e2e_single_{best_diag['id']}.joblib", compress=3)
+            final["single"] = single_predict(single_final, best_diag["family"], X_test)
+            del single_final
+        del X_all, X_test
+        gc.collect()
 
-    for task, summary in chosen:
-        fs = summary.get("features", "inst")
-        X_all, X_test = final_inputs[fs]
-        if task == "detection":
-            rows = (full_df["sample"] % DET_STRIDE == 0).to_numpy()
-            X_fit, y_fit = X_all[rows], full_df.loc[rows, "target"].to_numpy()
-        else:
-            rows = ((full_df["target"] == 1) & (full_df["sample"] % DIAG_STRIDE == 0)).to_numpy()
-            X_fit, y_fit = X_all[rows], full_df.loc[rows, "faultNumber"].to_numpy()
-        X_normal = X_all[(full_df["faultNumber"] == 0).to_numpy()]
-        model = fit_final(task, summary, X_fit, y_fit, X_normal)
-        explain = final_explain(summary, model, INPUT_NAMES[fs])
-        key = "coefficients" if summary["family"] in ("logreg", "baseline", "pcalr") else "importances"
-        if task == "detection":
-            scores = final_scores(task, summary, model, X_test)
-            threshold = summary["val"]["threshold"]                    # chosen on validation
-            metrics = detection_metrics(y_test, scores, threshold)
-            by_fault, reference = delays_to_json(streak_delays(runs_test, faults_test, samples_test,
-                                                               scores >= threshold, FAULT_ONSET["test"]))
-            test_results["detection"][summary["id"]] = metrics
-            write_json(WEB_DIR / "detection" / f"test_{summary['id']}.json", {
-                "summary": {**summary, "test": metrics}, key: explain,
-                "test": {**score_histograms(y_test, scores, faults_test, [threshold]),
-                         "delays": {"validation_threshold": {"threshold": threshold, "by_fault": by_fault,
-                                                             "reference": reference}}}})
-        else:
-            pred = final_scores(task, summary, model, X_test[test_post])
-            true = faults_test[test_post]
-            metrics, cm, recall = diagnosis_metrics(true, pred)
-            by_fault, _ = delays_to_json(streak_delays(runs_test[test_post], true, samples_test[test_post],
-                                                       pred == true, FAULT_ONSET["test"]))
-            test_results["diagnosis"][summary["id"]] = metrics
-            write_json(WEB_DIR / "diagnosis" / f"test_{summary['id']}.json", {
-                "summary": {**summary, "test": metrics}, key: explain,
-                "test": {"labels": FAULTS, "confusion_matrix": cm, "recall": recall, "delays": by_fault}})
-        print(f"TEST {summary['label']:45s}", {k: round(v, 4) for k, v in metrics.items() if not isinstance(v, int)})
+    if do_e2e:
+        chain_pred = np.where(final["detection"] >= best_det["val"]["threshold"], final["diagnosis"], 0).astype(int)
+        e2e_test["chain"] = e2e_metrics(true21_test, chain_pred, runs_test, samples_test, FAULT_ONSET["test"])
+        fs_score, fs_pick, fs_arg = final["single"]
+        e2e_test["single"] = e2e_metrics(true21_test, np.where(fs_score >= single_threshold, fs_pick, 0).astype(int),
+                                         runs_test, samples_test, FAULT_ONSET["test"])
+        e2e_test["single_argmax"] = e2e_metrics(true21_test, fs_arg.astype(int), runs_test, samples_test, FAULT_ONSET["test"])
+        for k, v in e2e_test.items():
+            print(f"TEST end to end {k:22s} macro-F1 (21 labels) {v['macro_F1']:.4f}  false alarms {v['false_alarm_rate']:.3f}")
+        e2e = json.loads(E2E_PATH.read_text())
+        e2e["test"] = e2e_test
+        write_json(E2E_PATH, e2e)
 
     write_manifest(test_results)
     print("Manifest updated with test results.")
