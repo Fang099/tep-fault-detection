@@ -32,7 +32,7 @@ function renderFindings(manifest) {
   const base = det.find(m => m.penalty === "baseline");
   const noneU = findModel(manifest, "detection", { penalty: "none", weighting: "none" });
   const noneB = findModel(manifest, "detection", { penalty: "none", weighting: "balanced" });
-  const bestOf = (models, f) => models.reduce((a, b) => (f(b) > f(a) ? b : a));
+  const bestOf = (models, f) => (models.length ? models.reduce((a, b) => (f(b) > f(a) ? b : a)) : null);
   const regDet = bestOf(det.filter(m => m.penalty === "l1" || m.penalty === "l2"), m => m.val.recall);
   const regDia = bestOf(dia.filter(m => m.penalty === "l1" || m.penalty === "l2"), m => m.val.macro_F1);
   const noneDia = dia.find(m => m.penalty === "none");
@@ -74,6 +74,7 @@ function renderFindings(manifest) {
     noneU && noneB ? `<b>Class weighting matters only a little.</b> Without a penalty, balanced weights catch ${pct(noneB.val.recall)} against
      ${pct(noneU.val.recall)} unweighted. At a fixed false-alarm rate, weighting mostly moves the threshold rather than changing the ranking of rows.` : "",
     (() => {
+      if (!regDet || !regDia || !noneDia || !(noneU || noneB)) return "";      // not all trained yet
       const noneBest = [noneU, noneB].filter(Boolean).reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
       const gain = Math.max(regDet.val.recall - noneBest.val.recall, regDia.val.macro_F1 - noneDia.val.macro_F1);
       return gain <= 0.005

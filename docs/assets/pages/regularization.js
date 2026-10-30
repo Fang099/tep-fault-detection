@@ -85,7 +85,7 @@ function renderPerformance() {
   lineChart($("chart-perf"), {
     height: 320,
     x: { type: "log", domain: [grid[0] / 2, grid[grid.length - 1] * 2], ticks: grid, fmt: fmtC, label: "C (left = stronger regularization)" },
-    y: { domain: [0, Math.max(...ys) * 1.08], fmt: y => fmtMetric(task, y), label: metricName(task) },
+    y: { domain: [0, ys.length ? Math.max(...ys) * 1.08 : 1], fmt: y => fmtMetric(task, y), label: metricName(task) },
     series, hlines,
     tip: (s, p) => `<b>${esc(p[2].label)}</b><br>${metricName(task)}: <b>${fmtMetric(task, p[1])}</b><br>Sensors used: ${p[2].coef_nonzero} of 52<br><span class="note">click to open</span>`,
     onClick: (s, p) => { location.href = modelLink(page, p[2]); },
@@ -107,6 +107,14 @@ function renderPerformance() {
   // Tiles and callout.
   const regs = models.filter(m => m.penalty === "l1" || m.penalty === "l2");
   const nones = models.filter(m => m.penalty === "none");
+  const missing = grid.length * 2 * weightings.length + weightings.length - models.length;
+  $("partial-note").textContent = missing > 0
+    ? `${missing} of the logistic regression models for this task are not in these results yet, so some points are missing.` : "";
+  if (!regs.length || !nones.length) {
+    $("tiles-perf").innerHTML = "";
+    $("callout-perf").innerHTML = "The comparison appears once both regularized and unregularized models are in the results.";
+    return;
+  }
   const bestReg = regs.reduce((a, b) => (metricOf(task, b) > metricOf(task, a) ? b : a));
   const bestNone = nones.reduce((a, b) => (metricOf(task, b) > metricOf(task, a) ? b : a));
   const best = metricOf(task, bestReg) > metricOf(task, bestNone) ? bestReg : bestNone;
@@ -167,6 +175,11 @@ function renderPaths() {
   });
   series.sort((a, b) => (top.indexOf(a.j) >= 0) - (top.indexOf(b.j) >= 0));   // draw highlighted lines on top
   legend($("legend-paths"), top.map((j, k) => ({ label: `${features[j]} · ${VARIABLES[features[j]]}`, color: PALETTE[k] })));
+  if (!entries.length) {
+    $("chart-paths").innerHTML = `<div class="empty">None of these models are in the results yet. Try the other penalty or weighting.</div>`;
+    $("legend-paths").innerHTML = ""; $("tiles-path").innerHTML = ""; $("top-title").textContent = ""; $("chart-top").innerHTML = "";
+    return;
+  }
   const all = vecs.flat();
   const lim = Math.max(...all.map(Math.abs)) || 1;
   lineChart($("chart-paths"), {
