@@ -359,8 +359,9 @@ def history_block(df, window, chunk_rows=200_000, out_mean=None, out_std=None):
 
 
 def raw_inputs(df, fs):
-    """Unscaled inputs: the 52 readings, then (history sets) the 52 rolling means and the 52 rolling std devs."""
-    x = df[FEATURES].to_numpy(np.float32)
+    """Unscaled inputs: the 52 readings, then (history sets) the 52 rolling means and the 52 rolling std devs.
+    Always a fresh array (copy=True): the inputs are scaled in place afterwards, which must never touch df."""
+    x = df[FEATURES].to_numpy(np.float32, copy=True)
     if fs == "inst":
         return x
     k = len(FEATURES)
@@ -368,6 +369,15 @@ def raw_inputs(df, fs):
     out[:, :k] = x
     history_block(df, window_of(fs), out_mean=out[:, k:2 * k], out_std=out[:, 2 * k:])
     return out
+
+
+def check_ids(stage):
+    """Stop with a clear message if the run or fault ids of the data have gone missing (they never should)."""
+    for name, d in (("train", train_df), ("validation", val_df)):
+        bad = d[["faultNumber", "simulationRun", "sample", "run_id"]].isna().sum()
+        if bad.any():
+            raise SystemExit(f"DATA CHECK FAILED after {stage}: missing ids in {name} data {bad.to_dict()}; "
+                             f"dtypes {d.dtypes[['faultNumber', 'simulationRun', 'run_id']].to_dict()}")
 
 
 def build_inputs(fs):
@@ -384,8 +394,10 @@ def build_inputs(fs):
 
 FEATURE_SETS = ["inst"] + (["hist"] if HISTORY else [])
 scalers, X_train, X_val = {}, {}, {}
+check_ids("the split")
 for fs in FEATURE_SETS:
     build_inputs(fs)
+    check_ids(f"building the '{fs}' inputs")
 det_in_keep, diag_in_keep = det_rows[keep_rows], diag_rows[keep_rows]
 normal_in_keep = (train_df.loc[keep_rows, "faultNumber"] == 0).to_numpy()   # fault-free training runs (PCA monitoring)
 
@@ -403,8 +415,8 @@ print(f"Detection training rows: {int(det_rows.sum())}   Diagnosis training rows
 # Validation runs, for the bootstrap and the run viewer.
 run_codes, run_uniques = pd.factorize(val_df["run_id"].to_numpy())
 run_fault = val_df.groupby("run_id", sort=False)["faultNumber"].first().reindex(run_uniques).to_numpy()
-TRACE_RUNS = [int(val_df.loc[val_df["faultNumber"] == f, "run_id"].min()) for f in range(0, 21)
-              if (val_df["faultNumber"] == f).any()]
+_first_run = val_df.groupby("faultNumber")["run_id"].min()
+TRACE_RUNS = [int(r) for r in _first_run.reindex(range(0, 21)).dropna()]
 
 # ====================================================================================================
 # ## 3. Models
@@ -1561,7 +1573,7 @@ def export_data_summary():
     normal = train_df[train_df["faultNumber"] == 0]
     X_norm = StandardScaler().fit_transform(normal[FEATURES].to_numpy(np.float32))    # standardized on normal rows
     pca = PCA(random_state=SEED).fit(X_norm)
-    stats_tbl = normal[FEATURES].agg(["mean", "std", "min", "max"]).T
+    stats_tbl = normal[FEATURES].astype(np.float64).agg(["mean", "std", "min", "max"]).T   # float64: exact spreads
     write_json(WEB_DIR / "data_summary.json", {
         "quality": QUALITY,
         "variables": {f: {k: float(stats_tbl.loc[f, k]) for k in ("mean", "std", "min", "max")} for f in FEATURES},
