@@ -442,6 +442,12 @@ def make_lr(penalty: str, C: float | None, class_weight=None, multiclass=False) 
     return LogisticRegression(C=C, **kw)
 
 
+def lr_converged(model):
+    """False when the solver stopped at its iteration limit (scikit-learn then warns "did not converge")."""
+    n_iter = getattr(model, "n_iter_", None)
+    return None if n_iter is None else bool(np.max(n_iter) < model.max_iter)
+
+
 # Sanity check: a strongly regularized lasso must set some coefficients to exactly zero.
 if "logreg" in FAMILIES:
     _X, _y, _ = task_data("detection", "inst")
@@ -1044,10 +1050,12 @@ def run_linear(task, fs="inst"):
         mid = model_id(task, penalty, C, cw, fs)
         family = "baseline" if penalty == "baseline" else "logreg"
         old = existing_summary(task, mid)
+        path = MODEL_DIR / f"{mid}.joblib"
         if up_to_date(old) and not forced(family):
+            if family == "logreg" and "converged" not in old and path.exists():
+                old["converged"] = lr_converged(joblib.load(path))     # older exports lack the flag
             summaries.append(old)
             continue
-        path = MODEL_DIR / f"{mid}.joblib"
         if path.exists() and not forced(family) and old is not None:
             model, secs = joblib.load(path), old.get("fit_seconds", 0.0)      # re-export from the saved model
         elif family == "baseline" or train_lr:
@@ -1063,6 +1071,8 @@ def run_linear(task, fs="inst"):
             continue
         params = {} if family == "baseline" else {"penalty": penalty, "C": C, "class_weight": cw or "none"}
         extra = {"penalty": penalty, "C": C, **({"class_weight": cw or "none"} if task == "detection" else {})}
+        if family == "logreg":
+            extra["converged"] = lr_converged(model)
         label, explain = model_label(penalty, C, cw, fs), coefficients(model, INPUT_NAMES[fs])
         if task == "detection":
             s = export_detection(mid, label, family, params, chunked(lambda A: model.predict_proba(A)[:, 1], Xv).astype("float64"), secs,

@@ -110,8 +110,10 @@ function renderPerformance() {
   const maxC = task === "diagnosis" ? manifest.settings.diag_lasso_max_c : null;   // diagnosis lasso stops here on purpose
   const lassoGrid = maxC ? grid.filter(C => C <= maxC * (1 + 1e-9)) : grid;
   const missing = (grid.length + lassoGrid.length) * weightings.length + weightings.length - models.length;
-  $("lasso-note").textContent = maxC && lassoGrid.length < grid.length
-    ? `Lasso for diagnosis was trained up to C = ${fmtC(maxC)}: weaker penalties are very slow on all the data (20 faults at once, one core) and keep every sensor, matching ridge.` : "";
+  const unconverged = models.filter(m => m.converged === false);
+  $("lasso-note").textContent = (maxC && lassoGrid.length < grid.length
+    ? `Lasso for diagnosis was trained only up to C = ${fmtC(maxC)}: on all the data each fit takes hours (20 faults at once, on one core), and weaker penalties keep every sensor, matching ridge. ` : "")
+    + (unconverged.length ? `${unconverged.length} model${unconverged.length > 1 ? "s" : ""} (${unconverged.map(m => m.label).join("; ")}) stopped at the solver's iteration limit before fully converging, so ${unconverged.length > 1 ? "their" : "its"} scores and coefficients are approximate.` : "");
   $("partial-note").textContent = missing > 0
     ? `${missing} of the logistic regression models for this task are not in these results yet, so some points are missing.` : "";
   if (!regs.length || !nones.length) {
