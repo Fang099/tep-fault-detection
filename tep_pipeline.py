@@ -55,6 +55,7 @@ Results are written to <out-dir>/outputs_<N>runs (or outputs_full): models_v3/ a
 Finished models are skipped on re-runs, so an interrupted run can simply be restarted.
 """
 import argparse
+import gc
 import inspect
 import json
 import shutil
@@ -793,16 +794,44 @@ def fit_tree_model(task, family, depth, X, y):
     return model
 
 
+# Predictions are made in chunks of rows: libraries convert inputs to float64 and build per-row arrays, which on
+# the full validation or test set (1-10 million rows x 156 inputs) can need several GB at once.
+CHUNK_ROWS = 200_000
+
+
+def chunked(fn, X, rows=CHUNK_ROWS):
+    """fn applied to blocks of rows of X, results stacked (tuples of arrays are stacked element-wise)."""
+    if len(X) <= rows:
+        return fn(X)
+    outs = [fn(X[i:i + rows]) for i in range(0, len(X), rows)]
+    if isinstance(outs[0], tuple):
+        return tuple(np.concatenate(part) for part in zip(*outs))
+    return np.concatenate(outs)
+
+
+def staged_at(model, X, keep):
+    """Staged predict_proba of a boosted model at the rounds in `keep`, chunk by chunk: {round: proba}."""
+    keep = sorted(set(keep))
+    parts = {r: [] for r in keep}
+    for i in range(0, len(X), CHUNK_ROWS):
+        for r, pp in enumerate(model.staged_predict_proba(X[i:i + CHUNK_ROWS]), start=1):
+            if r in parts:
+                parts[r].append(pp)
+            if r >= keep[-1]:
+                break
+    return {r: np.concatenate(v) for r, v in parts.items()}
+
+
 def tree_checkpoints(task, family, depth, model, Xv, secs, names):
     """Validation output at every checkpoint size, read off one fitted model."""
     cp = lambda params, out, explain, s: {"params": params, "output": out, "explain": explain, "secs": s}
     if family == "tree":
-        return [cp({"depth": depth}, task_output(task, model.predict_proba(Xv), model.classes_),
+        return [cp({"depth": depth}, task_output(task, chunked(model.predict_proba, Xv), model.classes_),
                    importances(model.feature_importances_, "impurity", names), secs)]
     if family == "rf":
         out, total, imp = [], None, np.zeros(len(names))
         for k, est in enumerate(model.estimators_, start=1):
-            p = est.predict_proba(Xv)
+            p = chunked(est.predict_proba, Xv)
             total = p if total is None else total + p
             imp += est.feature_importances_
             if k in RF_TREES:
@@ -811,25 +840,27 @@ def tree_checkpoints(task, family, depth, model, Xv, secs, names):
         return out
     if family == "gb":
         # scikit-learn's histogram boosting has no built-in feature importances.
-        return [cp({"depth": depth, "rounds": k}, task_output(task, p, model.classes_), None, secs * k / max(GB_ROUNDS))
-                for k, p in enumerate(model.staged_predict_proba(Xv), start=1) if k in GB_ROUNDS]
+        staged = staged_at(model, Xv, GB_ROUNDS)
+        return [cp({"depth": depth, "rounds": k}, task_output(task, staged[k], model.classes_), None, secs * k / max(GB_ROUNDS))
+                for k in GB_ROUNDS]
     if family == "ada":
         n_fit = len(model.estimators_)       # AdaBoost stops early if a round fits perfectly or is no better than chance
-        staged = list(model.staged_predict_proba(Xv))
+        staged = staged_at(model, Xv, [min(r, n_fit) for r in ADA_ROUNDS])   # only the rounds that are shown
         imp, wsum, cum = np.zeros(len(names)), 0.0, []
         for k in range(n_fit):
             imp = imp + model.estimator_weights_[k] * model.estimators_[k].feature_importances_
             wsum += model.estimator_weights_[k]
             cum.append(imp / wsum if wsum > 0 else imp)
-        return [cp({"depth": depth, "rounds": r}, task_output(task, staged[min(r, n_fit) - 1], model.classes_),
+        return [cp({"depth": depth, "rounds": r}, task_output(task, staged[min(r, n_fit)], model.classes_),
                    importances(cum[min(r, n_fit) - 1], "weighted impurity", names), secs * min(r, n_fit) / max(ADA_ROUNDS))
                 for r in ADA_ROUNDS]
     if family == "xgb":
         gain = model.get_booster().get_score(importance_type="gain")
         imp = importances([gain.get(f"f{j}", 0.0) for j in range(len(names))], "gain", names)
         classes = getattr(model, "tep_classes_", FAULTS if task == "diagnosis" else np.array([0, 1]))
-        return [cp({"depth": depth, "rounds": r}, task_output(task, model.predict_proba(Xv, iteration_range=(0, r)),
-                                                               classes), imp, secs * r / max(XGB_ROUNDS))
+        return [cp({"depth": depth, "rounds": r},
+                   task_output(task, chunked(lambda A: model.predict_proba(A, iteration_range=(0, r)), Xv), classes),
+                   imp, secs * r / max(XGB_ROUNDS))
                 for r in XGB_ROUNDS]
     raise ValueError(family)
 
@@ -843,7 +874,7 @@ def fit_pcalr(task, k, X, y):
 
 def pcalr_checkpoint(task, k, model, Xv, secs):
     pca, lr = model["pca"], model["lr"]
-    proba = lr.predict_proba(pca.transform(Xv))
+    proba = chunked(lambda A: lr.predict_proba(pca.transform(A)), Xv)
     # The model is linear in the original (standardized) sensors: z = w . (P x) = (P^T w) . x
     coef = lr.coef_ @ pca.components_
     explain = {"features": FEATURES, "values": coef[0] if coef.shape[0] == 1 else coef, "nonzero": len(FEATURES)}
@@ -865,6 +896,8 @@ def pca_monitor_fit(X_normal):
 def pca_monitor_scores(pca, X, k):
     """Hotelling's T^2 (distance inside the k-dimensional model plane, scaled by each component's variance) and
     SPE (squared distance from the plane, i.e. what the model can't explain)."""
+    if len(X) > CHUNK_ROWS:
+        return chunked(lambda A: pca_monitor_scores(pca, A, k), X)
     P, lam = pca.components_[:k], pca.explained_variance_[:k]
     if hasattr(pca, "tep_scaler_"):
         X = pca.tep_scaler_.transform(X)
@@ -1014,10 +1047,10 @@ def run_linear(task, fs="inst"):
         extra = {"penalty": penalty, "C": C, **({"class_weight": cw or "none"} if task == "detection" else {})}
         label, explain = model_label(penalty, C, cw, fs), coefficients(model, INPUT_NAMES[fs])
         if task == "detection":
-            s = export_detection(mid, label, family, params, model.predict_proba(Xv)[:, 1].astype("float64"), secs,
+            s = export_detection(mid, label, family, params, chunked(lambda A: model.predict_proba(A)[:, 1], Xv).astype("float64"), secs,
                                  explain, fs, baseline=(family == "baseline"), extra=extra)
         else:
-            s = export_diagnosis(mid, label, family, params, model.predict(Xv), secs, explain, fs, extra=extra)
+            s = export_diagnosis(mid, label, family, params, chunked(model.predict, Xv), secs, explain, fs, extra=extra)
         summaries.append(describe(s))
     return summaries
 
@@ -1079,6 +1112,7 @@ def run_task(task):
         for fs in (["inst", "hist"] if family in HISTORY and "hist" in FEATURE_SETS else ["inst"]):
             t0 = time.time()
             summaries += run_family(task, family, fs)
+            gc.collect()                                   # return memory between families (long runs on Windows)
             if family in FAMILIES:
                 print(f"--- {task} {FAMILY_INFO[family]['label']}{HIST_LABEL[fs]}: {time.time() - t0:.0f}s", flush=True)
     return summaries
@@ -1144,10 +1178,10 @@ def final_scores(task, summary, model, X):
         t2, spe = pca_monitor_scores(model, X, p["k"])
         return t2 if p["stat"] == "T2" else spe
     if family == "pcalr":
-        proba = model["lr"].predict_proba(model["pca"].transform(X))
+        proba = chunked(lambda A: model["lr"].predict_proba(model["pca"].transform(A)), X)
         classes = model["lr"].classes_
     else:
-        proba = model.predict_proba(X)
+        proba = chunked(model.predict_proba, X)
         classes = getattr(model, "tep_classes_", getattr(model, "classes_", None))
     return task_output(task, proba, classes)
 
@@ -1272,8 +1306,8 @@ def load_saved(name):
 
 def proba_and_classes(family, model, X):
     if family == "pcalr":
-        return model["lr"].predict_proba(model["pca"].transform(X)), model["lr"].classes_
-    return model.predict_proba(X), getattr(model, "tep_classes_", getattr(model, "classes_", None))
+        return chunked(lambda A: model["lr"].predict_proba(model["pca"].transform(A)), X), model["lr"].classes_
+    return chunked(model.predict_proba, X), getattr(model, "tep_classes_", getattr(model, "classes_", None))
 
 
 def saved_output(task, summary, X):
@@ -1294,18 +1328,18 @@ def saved_output(task, summary, X):
         return final_scores(task, summary, model, X)
     if fam == "rf":
         k = p["trees"]
-        proba = sum(est.predict_proba(X) for est in model.estimators_[:k]) / k
+        proba = sum(chunked(est.predict_proba, X) for est in model.estimators_[:k]) / k
         return task_output(task, proba, model.classes_)
     if fam == "gb":
-        proba = next(pp for i, pp in enumerate(model.staged_predict_proba(X), start=1) if i == p["rounds"])
+        proba = staged_at(model, X, [p["rounds"]])[p["rounds"]]
         return task_output(task, proba, model.classes_)
     if fam == "ada":
         stop = min(p["rounds"], len(model.estimators_))
-        proba = next(pp for i, pp in enumerate(model.staged_predict_proba(X), start=1) if i == stop)
+        proba = staged_at(model, X, [stop])[stop]
         return task_output(task, proba, model.classes_)
     if fam == "xgb":
         classes = getattr(model, "tep_classes_", FAULTS if task == "diagnosis" else np.array([0, 1]))
-        return task_output(task, model.predict_proba(X, iteration_range=(0, p["rounds"])), classes)
+        return task_output(task, chunked(lambda A: model.predict_proba(A, iteration_range=(0, p["rounds"])), X), classes)
     raise ValueError(fam)
 
 
