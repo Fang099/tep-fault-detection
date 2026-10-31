@@ -107,7 +107,11 @@ function renderPerformance() {
   // Tiles and callout.
   const regs = models.filter(m => m.penalty === "l1" || m.penalty === "l2");
   const nones = models.filter(m => m.penalty === "none");
-  const missing = grid.length * 2 * weightings.length + weightings.length - models.length;
+  const maxC = task === "diagnosis" ? manifest.settings.diag_lasso_max_c : null;   // diagnosis lasso stops here on purpose
+  const lassoGrid = maxC ? grid.filter(C => C <= maxC * (1 + 1e-9)) : grid;
+  const missing = (grid.length + lassoGrid.length) * weightings.length + weightings.length - models.length;
+  $("lasso-note").textContent = maxC && lassoGrid.length < grid.length
+    ? `Lasso for diagnosis was trained up to C = ${fmtC(maxC)}: weaker penalties are very slow on all the data (20 faults at once, one core) and keep every sensor, matching ridge.` : "";
   $("partial-note").textContent = missing > 0
     ? `${missing} of the logistic regression models for this task are not in these results yet, so some points are missing.` : "";
   if (!regs.length || !nones.length) {

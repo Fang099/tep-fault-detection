@@ -107,6 +107,8 @@ parser.add_argument("--selection-far", type=float, default=0.05,
                     help="false-alarm rate on validation normal rows used to set thresholds and pick the best model")
 parser.add_argument("--test-runs-per-fault", type=int, default=0,
                     help="faulty test runs used per fault; 0 = all 500 (the full faulty test file is ~10M rows)")
+parser.add_argument("--diag-lasso-max-c", type=float, default=1e-4,
+                    help="largest C trained for diagnosis lasso (weaker penalties are slow on all the data and match ridge)")
 parser.add_argument("--learning-curve", default="1",
                     help="1 = measure how the best models depend on the amount of training data; 0 = skip")
 parser.add_argument("--end-to-end", default="1",
@@ -1020,6 +1022,10 @@ def run_linear(task, fs="inst"):
     configs = [("baseline", None, None)] if fs == "inst" else []
     for cw in weights:
         configs += [(p, C, cw) for p in penalties for C in ([None] if p == "none" else C_GRID)]
+    # Diagnosis lasso (20 classes, single-threaded) gets slow as the penalty weakens, and with weak penalties it keeps
+    # every sensor and matches ridge, so only the stronger penalties are trained.
+    if task == "diagnosis":
+        configs = [c for c in configs if not (c[0] == "l1" and c[1] > args.diag_lasso_max_c * (1 + 1e-9))]
     train_lr = ("logreg" in FAMILIES) and (fs == "inst" or "logreg" in HISTORY)
     summaries = []
     for penalty, C, cw in configs:
@@ -1599,6 +1605,7 @@ def write_manifest(test_results=None):
         },
         "settings": {"split": "simulation_number", "C_grid": C_GRID, "class_weights": [c or "none" for c in CLASS_WEIGHTS],
                      "selection_far": SELECTION_FAR, "far_levels": FAR_LEVELS, "consecutive": CONSECUTIVE, "consecutive_levels": CONSECUTIVE_LEVELS,
+                     "diag_lasso_max_c": args.diag_lasso_max_c,
                      "det_stride": DET_STRIDE, "diag_stride": DIAG_STRIDE, "rf_sample": RF_SAMPLE,
                      "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2,
                      "hist_window": HIST_WINDOW, "hist_windows": sorted([HIST_WINDOW] + SWEEP_WINDOWS), "bootstrap": BOOTSTRAP, "pcamon_alpha": PCAMON_ALPHA,
