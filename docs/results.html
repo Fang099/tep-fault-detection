@@ -67,8 +67,8 @@
   <section class="section" id="limits" data-toc="Limitations">
     <h2>Limitations</h2>
     <ul class="tight">
-      <li><b>Short memory.</b> Most models see the 52 variables at a single moment; the history versions add only the last 30 minutes as
-        rolling means and standard deviations. Faults that drift over hours, or change the plant's dynamics in subtler ways, remain hard to see.</li>
+      <li><b>Short memory.</b> Most models see the 52 variables at a single moment; the history versions add at most the last
+        hour as rolling means and standard deviations (2 hours in the window sweep, which is shown but not used to pick models). Faults that drift over hours, or change the plant's dynamics in subtler ways, remain hard to see.</li>
       <li><b>Some faults are invisible to these variables.</b> Faults 3, 9 and 15 are widely reported as nearly undetectable in the TEP
         literature, because they barely change the statistics of the measured data. Low scores on them are expected.</li>
       <li><b>Detection delays can include chance alarms.</b> At a 5% false-alarm rate, three alarms in a row eventually happen on normal

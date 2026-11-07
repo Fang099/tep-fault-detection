@@ -43,7 +43,7 @@ function renderFindings(manifest) {
       // Like-for-like: best non-linear vs best logistic regression, with the same inputs.
       const all = manifest.detection.models, allD = manifest.diagnosis.models;
       const pick = (ms, fs, lin, key) => {
-        const c = ms.filter(m => (fs === "hist" ? isHist(m.features) : (m.features || "inst") === fs) && familyOf(m) !== "baseline" && (familyOf(m) === "logreg") === lin);
+        const c = ms.filter(m => m.selectable !== false && (fs === "hist" ? isHist(m.features) : (m.features || "inst") === fs) && familyOf(m) !== "baseline" && (familyOf(m) === "logreg") === lin);
         return c.length ? c.reduce((a, b) => (key(b) > key(a) ? b : a)) : null;
       };
       const rec = m => m.val.recall, f1 = m => m.val.macro_F1;
@@ -90,7 +90,7 @@ function renderFindings(manifest) {
      ${num(bestD.val.macro_F1, 3)} against ${num(dia.find(m => m.penalty === "baseline").val.macro_F1, 3)} for the baseline;
      some faults are named almost perfectly while others are barely above chance. See <a href="diagnosis.html">Diagnosis</a>.`,
     (() => {
-      const all = manifest.detection.models, h = all.filter(m => isHist(m.features));
+      const all = manifest.detection.models, h = all.filter(m => isHist(m.features) && m.selectable !== false);
       if (!h.length) return "";
       const bi = all.filter(m => inst(m) && familyOf(m) !== "baseline").reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
       const bh = h.reduce((a, b) => (b.val.recall > a.val.recall ? b : a));
@@ -171,6 +171,23 @@ function renderFamilies(manifest) {
 }
 
 // ---------- Final test ----------
+// Summary of how the test compares with validation, computed from the manifest.
+function testCallout(manifest, test) {
+  const bd = manifest.detection.best, bg = manifest.diagnosis.best;
+  const dv = manifest.detection.models.find(m => m.id === bd)?.val, gv = manifest.diagnosis.models.find(m => m.id === bg)?.val;
+  const dt = test.detection[bd], gt = test.diagnosis[bg], da = test.as_validated?.detection?.[bd];
+  if (!dv || !gv || !dt || !gt) return "";
+  const far = r => 1 - r.normal_recall;
+  const close = Math.abs(dt.recall - dv.recall) < 0.02 && Math.abs(gt.macro_F1 - gv.macro_F1) < 0.02;
+  return `<p class="callout"><b>${close ? "The test confirms the validation results." : "The test differs from validation."}</b>
+    Detection catches ${pct(dt.recall)} of faulty rows on test against ${pct(dv.recall)} on validation; diagnosis reaches macro-F1
+    ${num(gt.macro_F1, 3)} against ${num(gv.macro_F1, 3)}. ${da ? `The false alarm rate drifts from the 5% set on validation to
+    ${pct(far(da))} on test for the exact validated model (${pct(far(dt))} after retraining). The threshold sits in the far tail of
+    the normal scores, where small differences between runs matter, and test runs are longer (48 hours against 25), so they reach
+    later stretches of operation that no training run shows. A plant would recheck the threshold on its own normal data.` : ""} ${da ? `Retraining on the validation runs as well changes little (${pct(dt.recall)} against
+    ${pct(da.recall)}), as the learning curve below predicts.` : ""}</p>`;
+}
+
 async function renderTest(manifest) {
   const body = $("test-body");
   const test = manifest.test;
@@ -187,7 +204,7 @@ async function renderTest(manifest) {
         <td class="n">${num(r.ROC_AUC, 3)}</td><td class="n">${num(r.PR_AUC, 3)}</td></tr>`;
   const diaRow = (name, r, sub) => `<tr class="${sub ? "sub" : ""}"><td>${name}</td><td class="n">${num(r.macro_F1, 3)}</td><td class="n">${pct(r.accuracy)}</td></tr>`;
   body.innerHTML = `
-    <p class="intro">The chosen models, retrained on all training runs and evaluated once on ${int(test.rows)} test rows
+    <p class="intro">The chosen models, retrained on the training and validation runs together, and evaluated once on ${int(test.rows)} test rows
       (${test.runs_per_fault} faulty runs per fault type plus the fault-free test runs; ${pct(test.fault_share, 0)} faulty).
       Detection uses the threshold chosen on validation.${test.rows_copied_from_train != null
         ? ` Test rows identical to a training row: <b>${int(test.rows_copied_from_train)}</b>${test.rows_copied_from_train === 0 ? " (no overlap)" : ""}.` : ""}</p>
@@ -203,6 +220,7 @@ async function renderTest(manifest) {
     <div class="table-wrap"><table><thead><tr><th>Model</th><th class="n">Macro-F1</th><th class="n">Accuracy</th></tr></thead><tbody>${
       diaIds.map(id => diaRow(label("diagnosis", id), test.diagnosis[id])).join("")}${
       Object.entries(av.diagnosis || {}).map(([id, r]) => diaRow(`${label("diagnosis", id)} <span class="note">as validated</span>`, r, true)).join("")}</tbody></table></div>
+    ${testCallout(manifest, test)}
     <h3>Validation against test, per fault (best detection model)</h3>
     <div class="plot"><div id="legend-test"></div><div id="chart-test"></div></div>`;
 
@@ -254,7 +272,9 @@ async function renderE2E(manifest) {
       `<b>${gap > 0 ? "One model with 21 answers" : "Two specialised models in a chain"} does better</b>`} on validation: macro-F1
       ${num(v.chain.macro_F1, 3)} for the chain against ${num(v.single.macro_F1, 3)} for one model, at
       ${pct(v.chain.false_alarm_rate)} and ${pct(v.single.false_alarm_rate)} false alarms. ${v.single_argmax ? `Without false alarm control,
-      the single model's most likely answer raises false alarms on ${pct(v.single_argmax.false_alarm_rate)} of normal rows.` : ""}
+      the single model's most likely answer raises false alarms on ${pct(v.single_argmax.false_alarm_rate)} of normal rows: "no fault" is
+      only 1 of 21 answers in training, so the model rarely picks it.` : ""}${data.test?.chain && data.test?.single ? ` On the final test
+      ${(data.test.single.macro_F1 - data.test.chain.macro_F1) * gap > 0 ? "the order holds" : "the order changes"}: ${num(data.test.chain.macro_F1, 3)} for the chain against ${num(data.test.single.macro_F1, 3)} for one model.` : ""}
       Compared with diagnosis alone (which only ever sees truly faulty rows), the chain shows the real cost of missed detections and
       false alarms.</p>
     <div class="modelbar" style="position:static;margin-top:16px">
