@@ -118,6 +118,16 @@ function renderFindings(manifest) {
         validation can judge fairly) — ${parts.join("; ")}.
         Longer windows catch slow, subtle faults better but react later to sudden ones. See <a href="detection.html#window">How much history helps</a>.`;
     })(),
+    (() => {
+      // RBF SVM: trained on a small subset only, so compared with the best model rather than chosen.
+      const sv = bestModel(manifest, "detection", "svm"), sg = bestModel(manifest, "diagnosis", "svm");
+      if (!sv && !sg) return "";
+      const rows = Math.max(...[sv, sg].filter(Boolean).map(m => m.params.rows));
+      return `<b>A kernel SVM can't use all the data.</b> An exact RBF support vector machine slows down with the square of the training rows,
+        so it was trained on random subsets of up to ${int(rows)} rows (out of millions). Its best settings reach
+        ${sv ? `${pct(sv.val.recall)} at 5% false alarms (${esc(sv.label)})` : ""}${sv && sg ? " and " : ""}${sg ? `macro-F1 ${num(sg.val.macro_F1, 3)} (${esc(sg.label)})` : ""},
+        against ${pct(best.val.recall)} and ${num(bestD.val.macro_F1, 3)} for the best models trained on every row. It is shown for comparison, never picked as the best model.`;
+    })(),
     `<b>Detection speed varies enormously by fault:</b> from minutes for sudden faults to many hours, or never, for subtle ones.
      See <a href="detection.html#speed">Detection</a>.`,
   ];
@@ -160,6 +170,9 @@ function renderFamilies(manifest) {
       <td class="n">${det ? pct(recallOf(det)) + (official ? ciCell(det.ci?.recall, x => pct(x)) : "") : "–"}</td><td class="n">${det ? num(det.val.ROC_AUC, 3) : "–"}</td>
       <td>${dia ? `<a href="${modelLink("diagnosis.html", dia)}">${esc(dia.label)}</a>` : "–"}</td>
       <td class="n">${dia ? num(dia.val.macro_F1, 3) + ciCell(dia.ci?.macro_F1, x => num(x, 3)) : "–"}</td></tr>`).join("")}</tbody>`;
+  if (rows.some(r => r.f.key === "svm" && (r.det || r.dia)))
+    $("fam-status").innerHTML += ` The RBF SVM is trained on a small random subset of the rows (an exact kernel SVM can't handle millions), so it is shown
+      for comparison but never chosen as the best model.`;
   legend($("legend-families"), [{ label: `Detection: faults caught at ${farTxt} false alarms`, color: COLORS.fault },
                                 { label: "Diagnosis: macro-F1", color: COLORS.data }]);
   barChart($("chart-families"), {
@@ -294,7 +307,7 @@ async function drawSensorSummary(manifest) {
   const topShare = n => ranked.slice(0, n).reduce((a, s) => a + b.bySensor[s], 0);
   const others = d.models.filter(m => m.id !== b.id);
   const famName = k => familyLabel(manifest, k);
-  const short = k => ({ logreg: "Log. reg.", pcalr: "PCA+LR", tree: "Tree", rf: "Forest", ada: "AdaBoost", xgb: "XGBoost", gb: "Grad. boost" }[k] || k);
+  const short = k => ({ logreg: "Log. reg.", pcalr: "PCA+LR", tree: "Tree", rf: "Forest", ada: "AdaBoost", xgb: "XGBoost", gb: "Grad. boost", svm: "SVM" }[k] || k);
   // Agreement: how many of the best model's top 10 sensors are in each other model's top 10.
   const top10 = new Set(ranked.slice(0, 10));
   const overlap = m => [...f].sort((x, y) => m.bySensor[y] - m.bySensor[x]).slice(0, 10).filter(s => top10.has(s)).length;
@@ -312,7 +325,7 @@ async function drawSensorSummary(manifest) {
     <h3>Do the other models agree?</h3>
     <p class="note">The same 15 sensors in the best model of each family, each column scaled to its own largest sensor. Logistic
       regression and PCA + logistic regression use coefficient size on standardized inputs, the tree models their importances; gradient
-      boosting (scikit-learn) and PCA monitoring have no per-sensor weights.</p>
+      boosting (scikit-learn), PCA monitoring and the RBF SVM have no per-sensor weights.</p>
     <div class="plot"><div id="chart-sens-agree"></div></div>
     <p class="callout" id="sens-callout"></p>
     <p class="note">Importance shows what a model uses, not what causes a fault. Correlated sensors share credit (a model may lean on one

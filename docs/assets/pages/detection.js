@@ -409,16 +409,20 @@ function renderScores() {
   }
   legend($("legend-scores"), items);
 
+  const margin = state.model.score_kind === "margin";      // SVM: logistic of the distance from the boundary
   const lo = stat ? scoreX(v.edges[0]) : Math.max(-12, logit(v.edges[0]));
   const hi = stat ? scoreX(v.edges[v.B]) : Math.min(12, logit(v.edges[v.B]));
-  const ticks = stat ? logTicks(lo, hi) : PROB_TICKS.filter(p => logit(p) >= lo && logit(p) <= hi);
+  const dStep = margin ? [0.25, 0.5, 1, 2, 5].find(s => (hi - lo) / s <= 8) || 10 : 1;
+  const ticks = stat ? logTicks(lo, hi)
+    : margin ? Array.from({ length: Math.floor(hi / dStep) - Math.ceil(lo / dStep) + 1 }, (_, i) => 1 / (1 + Math.exp(-(Math.ceil(lo / dStep) + i) * dStep)))
+    : PROB_TICKS.filter(p => logit(p) >= lo && logit(p) <= hi);
   const ys = series.flatMap(s => s.points.map(p => p[1])).sort((a, b) => a - b);
   const yMax = ys[Math.floor(ys.length * 0.995)] * 1.1 || 1;
   const r = v.at(state.t);
   lineChart(el, {
     height: 290,
-    x: { domain: [lo, hi], ticks: ticks.map(scoreX), fmt: x => { const t = ticks[ticks.map(scoreX).indexOf(x)]; return stat ? (t >= 10000 ? t.toExponential(0) : String(+t.toPrecision(3))) : String(t); },
-         label: stat ? `${state.model.params.stat === "T2" ? "Hotelling T²" : "SPE"} (log scale)` : "Model's fault score (probability, spaced by log-odds)" },
+    x: { domain: [lo, hi], ticks: ticks.map(scoreX), fmt: x => { const t = ticks[ticks.map(scoreX).indexOf(x)]; return stat ? (t >= 10000 ? t.toExponential(0) : String(+t.toPrecision(3))) : margin ? String(+logit(t).toFixed(2)) : String(t); },
+         label: stat ? `${state.model.params.stat === "T2" ? "Hotelling T²" : "SPE"} (log scale)` : margin ? "SVM score: signed distance from the boundary" : "Model's fault score (probability, spaced by log-odds)" },
     y: { domain: [0, yMax], fmt: y => y.toFixed(2), label: "Density" },
     series,
     vlines: r.threshold == null ? [] : [{ x: scoreX(r.threshold), color: COLORS.amber, label: "threshold", width: 2 }],
@@ -674,6 +678,7 @@ function renderCalibration() {
   const clear = msg => { el.innerHTML = `<div class="empty">${msg}</div>`; $("legend-calib").innerHTML = ""; $("tiles-calib").innerHTML = ""; $("calib-note").textContent = ""; $("callout-calib").innerHTML = ""; };
   if (isBaseline()) return clear("The baseline gives every sample the same score, so there is nothing to calibrate.");
   if (state.model.score_kind === "stat") return clear("T² and SPE are distances, not probabilities, so calibration doesn't apply.");
+  if (state.model.score_kind === "margin") return clear("An SVM's score is a distance from its boundary, not a probability, so calibration doesn't apply.");
   if (!cal) return clear("Calibration data isn't in these results yet. It is exported by the latest version of the pipeline.");
   const pts = cal.bins.map(([p, f, n]) => [p, f, n]);
   legend($("legend-calib"), [{ label: "This model", color: COLORS.data }, { label: "Perfect calibration", color: COLORS.faint, dash: true }]);

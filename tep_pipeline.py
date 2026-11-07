@@ -27,6 +27,9 @@ Model families (--families picks which to train; the majority baseline is always
   gb      Gradient boosting (scikit-learn's histogram version): tree depth x boosting rounds.
   ada     AdaBoost with small decision trees: tree depth x boosting rounds.
   xgb     XGBoost: tree depth x boosting rounds (skipped if xgboost is not installed).
+  svm     RBF-kernel support vector machine on a small random subset of the training rows (--svm-rows), with margin
+          softness C. Exact kernel SVMs scale with the square of the training rows, so they can't use all the data;
+          they are shown for comparison but never picked as the overall best model.
 Forests and boosted models are trained once per depth at the largest size; smaller forests (the first k trees)
 and fewer boosting rounds (the first k rounds) are evaluated from that same fit, so the website can show every
 size without retraining.
@@ -74,6 +77,7 @@ from sklearn.metrics import (average_precision_score, confusion_matrix, f1_score
                              precision_score, recall_score, roc_auc_score)
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
 try:
@@ -85,8 +89,9 @@ pd.set_option("display.width", 220)
 pd.set_option("display.max_columns", 30)
 pd.set_option("display.max_rows", 200)
 
-ALL_FAMILIES = ["logreg", "pcalr", "pcamon", "tree", "rf", "gb", "ada", "xgb"]
-HISTORY_CAPABLE = ["logreg", "pcamon", "tree", "rf", "gb", "ada", "xgb"]
+ALL_FAMILIES = ["logreg", "pcalr", "pcamon", "tree", "rf", "gb", "ada", "xgb", "svm"]
+HISTORY_CAPABLE = ["logreg", "pcamon", "tree", "rf", "gb", "ada", "xgb", "svm"]
+SUBSET_FAMILIES = ["svm"]   # trained on a small subset only: shown for comparison, never chosen as the overall best
 
 # ---- Command-line settings -----------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="TEP fault detection and diagnosis pipeline")
@@ -115,6 +120,9 @@ parser.add_argument("--end-to-end", default="1",
                     help="1 = evaluate detection + diagnosis together (two-stage chain and one 21-label model); 0 = skip")
 parser.add_argument("--hist-windows", default="2,5,20,40",
                     help="extra history windows (in 3-minute samples) for the window sweep; '' to skip it")
+parser.add_argument("--svm-rows", default="5000,20000",
+                    help="training-subset sizes for the RBF SVM (random rows, nested); its cost grows with the square of this")
+parser.add_argument("--svm-c", default="1,10", help="values of C (margin softness) for the RBF SVM")
 parser.add_argument("--final-test", action="store_true", help="retrain the chosen models and evaluate on test")
 parser.add_argument("--force-retrain", action="store_true",
                     help="retrain the families listed in --families even if already exported (others are kept as they are)")
@@ -174,6 +182,9 @@ LEARNING_RATE = 0.1       # gradient boosting and XGBoost
 # diverge at depth 6-8 (a leaf whose rows already had near-zero probability for a fault got a near-zero curvature
 # term, so its update for that fault exploded). XGBoost's default is 1, so this matches it.
 GB_L2 = 1.0
+SVM_ROWS = [int(v) for v in args.svm_rows.split(",") if v.strip()]
+SVM_C = [float(v) for v in args.svm_c.split(",") if v.strip()]
+SVM_C = [int(c) if c == int(c) else c for c in SVM_C]   # 1, 10 rather than 1.0, 10.0 in ids and labels
 
 # ---- PCA, history, uncertainty ---------------------------------------------------------------------
 PCA_COMPONENTS = [2, 5, 10, 15, 20, 30, 40]       # PCA + logistic regression
@@ -728,8 +739,11 @@ FAMILY_INFO = {
                                             {"key": "rounds", "label": "Boosting rounds", "values": ADA_ROUNDS}]},
     "xgb": {"label": "XGBoost", "params": [{"key": "depth", "label": "Tree depth", "values": XGB_DEPTHS},
                                            {"key": "rounds", "label": "Boosting rounds", "values": XGB_ROUNDS}]},
+    "svm": {"label": "RBF support vector machine", "subset": True,
+            "params": [{"key": "rows", "label": "Training rows (random subset)", "values": SVM_ROWS},
+                       {"key": "C", "label": "C (margin softness)", "values": SVM_C}]},
 }
-PARAM_TAGS = {"depth": "d", "trees": "t", "rounds": "r", "k": "k"}
+PARAM_TAGS = {"depth": "d", "trees": "t", "rounds": "r", "k": "k", "rows": "n", "C": "c"}
 
 
 def unit_id(task, family, params, fs):
@@ -748,13 +762,15 @@ def unit_label(family, params, fs):
         "gb": lambda: f"Gradient boosting, depth {p['depth']}, {p['rounds']} rounds",
         "ada": lambda: f"AdaBoost, depth-{p['depth']} trees, {p['rounds']} rounds",
         "xgb": lambda: f"XGBoost, depth {p['depth']}, {p['rounds']} rounds",
+        "svm": lambda: f"RBF SVM, {p['rows']:,} training rows, C={p['C']}",
     }[family]() + HIST_LABEL[fs]
 
 
 def family_units(family, fs):
     """The separate fits a family needs (one per depth, one per component count, or one for everything)."""
     return {"pcalr": PCA_COMPONENTS, "pcamon": [None], "tree": TREE_DEPTHS, "rf": RF_DEPTHS, "gb": GB_DEPTHS,
-            "ada": ADA_DEPTHS, "xgb": HIST_XGB_DEPTHS if fs == "hist" else XGB_DEPTHS}[family]
+            "ada": ADA_DEPTHS, "xgb": HIST_XGB_DEPTHS if fs == "hist" else XGB_DEPTHS,
+            "svm": [(n, c) for n in SVM_ROWS for c in SVM_C]}[family]
 
 
 def checkpoint_params(family, unit):
@@ -764,6 +780,8 @@ def checkpoint_params(family, unit):
         return [{"stat": s, "k": k} for s in ("T2", "SPE") for k in PCAMON_COMPONENTS]
     if family == "tree":
         return [{"depth": unit}]
+    if family == "svm":
+        return [{"rows": unit[0], "C": unit[1]}]
     key, values = {"rf": ("trees", RF_TREES), "gb": ("rounds", GB_ROUNDS),
                    "ada": ("rounds", ADA_ROUNDS), "xgb": ("rounds", XGB_ROUNDS)}[family]
     return [{"depth": unit, key: v} for v in values]
@@ -772,6 +790,29 @@ def checkpoint_params(family, unit):
 def subsample(X, y, fraction, seed=SEED):
     idx = np.sort(np.random.default_rng(seed).choice(len(X), size=int(len(X) * fraction), replace=False))
     return X[idx], y[idx]
+
+
+def svm_subset(n_rows, n):
+    """The first n of one fixed random order of the training rows, so smaller subsets sit inside larger ones."""
+    return np.sort(np.random.default_rng(SEED).permutation(n_rows)[:min(n, n_rows)])
+
+
+def svm_fit(task, params, X, y):
+    idx = svm_subset(len(X), params["rows"])
+    model = build_tree_model(task, "svm", params)
+    model.fit(X[idx], y[idx])
+    return model
+
+
+def svm_output(task, model, X):
+    """Detection: the signed distance from the SVM's boundary, squashed with the logistic curve so it lies in (0, 1)
+    like the other scores (the ranking, and so every threshold metric, is unchanged; it is not a probability).
+    Diagnosis: the predicted fault (one-vs-one votes). Predictions run in parallel over blocks of rows: every row is
+    compared with every support vector, which is the slow part of an SVM."""
+    fn = model.decision_function if task == "detection" else model.predict
+    blocks = [X[i:i + 50_000] for i in range(0, len(X), 50_000)]
+    out = np.concatenate(joblib.Parallel(n_jobs=-1)(joblib.delayed(fn)(b) for b in blocks))
+    return 1.0 / (1.0 + np.exp(-out.astype("float64"))) if task == "detection" else out
 
 
 def task_output(task, proba, classes):
@@ -798,10 +839,16 @@ def build_tree_model(task, family, params):
         return XGBClassifier(n_estimators=params.get("rounds", max(XGB_ROUNDS)), max_depth=d, learning_rate=LEARNING_RATE,
                              tree_method="hist", n_jobs=-1, random_state=SEED,
                              eval_metric="logloss" if task == "detection" else "mlogloss")
+    if family == "svm":
+        # gamma="scale" = 1 / (inputs x variance of the inputs): the usual default for standardized inputs.
+        return SVC(C=params["C"], kernel="rbf", gamma="scale", cache_size=2000, random_state=SEED,
+                   class_weight="balanced" if task == "detection" else None)
     raise ValueError(family)
 
 
 def fit_tree_model(task, family, depth, X, y):
+    if family == "svm":
+        return svm_fit(task, {"rows": depth[0], "C": depth[1]}, X, y)    # the "unit" of an SVM is (rows, C)
     if family == "ada":
         X, y = subsample(X, y, ADA_SAMPLE)
     model = build_tree_model(task, family, {"depth": depth})
@@ -874,6 +921,11 @@ def tree_checkpoints(task, family, depth, model, Xv, secs, names):
         return [cp({"depth": depth, "rounds": r}, task_output(task, staged[min(r, n_fit)], model.classes_),
                    importances(cum[min(r, n_fit) - 1], "weighted impurity", names), secs * min(r, n_fit) / max(ADA_ROUNDS))
                 for r in ADA_ROUNDS]
+    if family == "svm":
+        n, c = depth
+        extra = {"score_kind": "margin"} if task == "detection" else {}
+        extra.update({"train_rows": int(model.shape_fit_[0]), "n_support": int(model.n_support_.sum())})
+        return [{**cp({"rows": n, "C": c}, svm_output(task, model, Xv), None, secs), "extra": extra}]
     if family == "xgb":
         gain = model.get_booster().get_score(importance_type="gain")
         imp = importances([gain.get(f"f{j}", 0.0) for j in range(len(names))], "gain", names)
@@ -1104,7 +1156,8 @@ def run_family(task, family, fs="inst"):
                 continue
             _, checkpoints = pcamon_checkpoints(Xv, X_train[fs][normal_in_keep], 0.0)
         else:
-            name = f"{task}_pcalr_k{unit}" if family == "pcalr" else f"{task}_{family}_d{unit}{HIST_TAG[fs]}"
+            name = (f"{task}_pcalr_k{unit}" if family == "pcalr" else ids[0] if family == "svm"
+                    else f"{task}_{family}_d{unit}{HIST_TAG[fs]}")
             model_path = MODEL_DIR / f"{name}.joblib"
             if model_path.exists() and not forced(family):
                 model = joblib.load(model_path)            # re-export from the saved model, no retraining
@@ -1168,6 +1221,8 @@ def fit_with_params(task, family, params, X, y):
         return fit_pcalr(task, params["k"], X, y)
     if family == "pcamon":
         raise ValueError("PCA monitoring is fitted on fault-free rows: use pca_monitor_fit")
+    if family == "svm":
+        return svm_fit(task, params, X, y)
     model = build_tree_model(task, family, params)
     if family == "ada":
         X, y = subsample(X, y, ADA_SAMPLE)
@@ -1182,7 +1237,7 @@ def fit_with_params(task, family, params, X, y):
 def sweep_jobs():
     jobs = []
     for task, summaries, key in (("detection", det_summaries, "recall"), ("diagnosis", diag_summaries, "macro_F1")):
-        for family in HISTORY:
+        for family in (f for f in HISTORY if f not in SUBSET_FAMILIES):     # subset-only models: no window sweep
             cands = [s for s in summaries if s["family"] == family and s.get("features") == "hist"]
             if not cands:
                 continue
@@ -1205,6 +1260,8 @@ def final_scores(task, summary, model, X):
     if family == "pcamon":
         t2, spe = pca_monitor_scores(model, X, p["k"])
         return t2 if p["stat"] == "T2" else spe
+    if family == "svm":
+        return svm_output(task, model, X)
     if family == "pcalr":
         proba = chunked(lambda A: model["lr"].predict_proba(model["pca"].transform(A)), X)
         classes = model["lr"].classes_
@@ -1300,21 +1357,23 @@ det_table = summary_table(det_summaries, ["recall", "precision", "F1", "ROC_AUC"
 # ### Choosing the best detection model
 # All models are compared at the same operating point (5% false alarms on validation normal rows), fixed before
 # looking at the results, so the best model is the one that catches the most faults there.
-candidates = det_table[(det_table["family"] != "baseline") & det_table["selectable"]]
+candidates = det_table[(det_table["family"] != "baseline") & det_table["selectable"] & ~det_table["family"].isin(SUBSET_FAMILIES)]
 best_det_id = candidates["recall"].idxmax()
 best_det = next(s for s in det_summaries if s["id"] == best_det_id)
 print("\nBest detection model per family and input set (recall at 5% false alarms):")
-grp = candidates.groupby(["family", "inputs"])["recall"].idxmax()
-print(candidates.loc[grp].sort_values("recall", ascending=False).round(4))
+shown = det_table[(det_table["family"] != "baseline") & det_table["selectable"]]
+grp = shown.groupby(["family", "inputs"])["recall"].idxmax()
+print(shown.loc[grp].sort_values("recall", ascending=False).round(4))
 print("Best detection model:", best_det["label"])
 
 diag_table = summary_table(diag_summaries, ["macro_F1", "accuracy"])
-diag_candidates = diag_table[(diag_table["family"] != "baseline") & diag_table["selectable"]]
+diag_candidates = diag_table[(diag_table["family"] != "baseline") & diag_table["selectable"] & ~diag_table["family"].isin(SUBSET_FAMILIES)]
 best_diag_id = diag_candidates["macro_F1"].idxmax()
 best_diag = next(s for s in diag_summaries if s["id"] == best_diag_id)
 print("\nBest diagnosis model per family and input set (macro-F1):")
-grp = diag_candidates.groupby(["family", "inputs"])["macro_F1"].idxmax()
-print(diag_candidates.loc[grp].sort_values("macro_F1", ascending=False).round(4))
+shown = diag_table[(diag_table["family"] != "baseline") & diag_table["selectable"]]
+grp = shown.groupby(["family", "inputs"])["macro_F1"].idxmax()
+print(shown.loc[grp].sort_values("macro_F1", ascending=False).round(4))
 print("Best diagnosis model:", best_diag["label"])
 
 # ====================================================================================================
@@ -1632,7 +1691,8 @@ def write_manifest(test_results=None):
                      "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2,
                      "hist_window": HIST_WINDOW, "hist_windows": sorted([HIST_WINDOW] + SWEEP_WINDOWS), "bootstrap": BOOTSTRAP, "pcamon_alpha": PCAMON_ALPHA,
                      "export_version": EXPORT_VERSION, "inputs": {k: len(v) for k, v in INPUT_NAMES.items()},
-                     "trace_runs": TRACE_RUNS, "lc_run_shares": LC_RUN_SHARES, "lc_strides": LC_STRIDES},
+                     "trace_runs": TRACE_RUNS, "lc_run_shares": LC_RUN_SHARES, "lc_strides": LC_STRIDES,
+                     "subset_families": SUBSET_FAMILIES},
         "families": [{"key": f, **FAMILY_INFO[f]} for f in present],
         "detection": {"models": det_summaries, "best": best_det_id,
                       "best_by_family": best_by_family(det_summaries, "recall"),

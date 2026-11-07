@@ -96,7 +96,8 @@ export function getJSON(path) {
 }
 // Manifests written before tree models existed have no family information; fill it in so every page can rely on it.
 const FAMILY_LABELS = { baseline: "Majority baseline", logreg: "Logistic regression", pcalr: "PCA + logistic regression",
-  pcamon: "PCA monitoring (T² / SPE)", tree: "Decision tree", rf: "Random forest", gb: "Gradient boosting", ada: "AdaBoost", xgb: "XGBoost" };
+  pcamon: "PCA monitoring (T² / SPE)", tree: "Decision tree", rf: "Random forest", gb: "Gradient boosting", ada: "AdaBoost", xgb: "XGBoost",
+  svm: "RBF support vector machine" };
 function normalizeManifest(m) {
   for (const task of ["detection", "diagnosis"]) {
     for (const s of m[task].models) {

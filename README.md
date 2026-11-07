@@ -32,6 +32,8 @@ One row is one 3-minute time step of one simulation run. The models use only the
   of trees); gradient boosting, AdaBoost and XGBoost (tree depth, boosting rounds). Forests and boosted models are
   trained once per depth; smaller forests and fewer rounds are read off the same fit. PCA + logistic regression
   (number of components) and PCA process monitoring (Hotelling's T² and SPE, fitted on fault-free runs only).
+  An RBF-kernel SVM (training-subset size, C) is trained on small random subsets only, since an exact kernel SVM
+  can't handle millions of rows; it is shown for comparison and never chosen as the best model.
   Every model trains on every time step of every training run (random forests and AdaBoost: a random 25% per
   tree/model).
 - **Temporal features (ablation):** selected families are also trained with a trailing 30-minute rolling mean and
