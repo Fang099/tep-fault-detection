@@ -2,6 +2,7 @@ import {
   renderChrome, showError, loadManifest, loadModel, loadTestModel, bestModel, dataNote, detectionView, findModel as findAny,
   familyOf, familyLabel, modelLink, COLORS, pct, num, int, tile, esc,
   metricsAtFar, loadAllDetection, farControl, OFFICIAL_FAR, isHist, windowText, windowOf, getJSON, fmtMinutes,
+  sensorWeights, inputInfo,
 } from "../site.js";
 import { barChart, lineChart, heatmap, legend } from "../charts.js";
 
@@ -18,6 +19,7 @@ async function main() {
   farControl($("fam-far"), levels, fam.far, far => { fam.far = far; renderFamilies(manifest); });
   renderFamilies(manifest);
   renderFindings(manifest);
+  renderSensorSummary(manifest).catch(showError);
   renderE2E(manifest).catch(showError);
   renderDataCurve(manifest);
   await renderTest(manifest);
@@ -236,6 +238,129 @@ async function renderTest(manifest) {
     x: { domain: [0, 1], fmt: x => pct(x, 0), label: "Share of the fault's rows caught at the validation threshold" },
     labelWidth: 70, valueFmt: x => pct(x, 0),
   });
+}
+
+// ---------- Which sensors matter (from the importances already stored with every model) ----------
+const KINDS = [["now", "Current reading"], ["mean", "Rolling mean"], ["std", "Rolling standard deviation"]];
+const sens = { task: "detection", cache: {} };
+
+// Per-sensor shares (summing to 1) plus the split by input kind, from one model file; null if it has no weights.
+function sensorShares(file, features) {
+  const w = sensorWeights(file);
+  if (!w) return null;
+  const names = (file.coefficients || file.importances).features;
+  const mag = w.values.map(Math.abs), total = mag.reduce((a, b) => a + b, 0) || 1;
+  const bySensor = Object.fromEntries(features.map(f => [f, 0])), byKind = { now: 0, mean: 0, std: 0 };
+  const perSensorKind = Object.fromEntries(features.map(f => [f, { now: 0, mean: 0, std: 0 }]));
+  names.forEach((n, j) => {
+    const m = /^(.*)_(mean|std)\d*$/.exec(n), base = m ? m[1] : n, kind = m ? m[2] : "now";
+    const v = mag[j] / total;
+    if (!(base in bySensor)) return;
+    bySensor[base] += v; byKind[kind] += v; perSensorKind[base][kind] += v;
+  });
+  return { bySensor, byKind, perSensorKind, kind: w.kind, method: w.method, hist: names.length > 52 };
+}
+
+async function loadSensorTask(manifest, task) {
+  if (sens.cache[task]) return sens.cache[task];
+  const features = manifest.dataset.features;
+  const ids = Object.entries(manifest[task].best_by_family || {});
+  const files = await Promise.all(ids.map(([, id]) => loadModel(task, id).catch(() => null)));
+  const models = ids.map(([fam, id], k) => {
+    const s = files[k] && sensorShares(files[k], features);
+    return s && { fam, id, model: manifest[task].models.find(m => m.id === id), ...s };
+  }).filter(Boolean);
+  return (sens.cache[task] = { features, models, best: models.find(m => m.id === manifest[task].best) });
+}
+
+async function renderSensorSummary(manifest) {
+  const seg = $("sens-task");
+  seg.addEventListener("click", ev => {
+    const b = ev.target.closest("button"); if (!b) return;
+    sens.task = b.dataset.v;
+    seg.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    drawSensorSummary(manifest).catch(showError);
+  });
+  await drawSensorSummary(manifest);
+}
+
+async function drawSensorSummary(manifest) {
+  const body = $("sens-body"), task = sens.task;
+  const d = await loadSensorTask(manifest, task);
+  if (!d.best) { body.innerHTML = `<div class="empty" style="min-height:100px">The best model has no stored sensor weights.</div>`; return; }
+  const b = d.best, f = d.features;
+  const ranked = [...f].sort((x, y) => b.bySensor[y] - b.bySensor[x]);
+  const top = ranked.slice(0, 15);
+  const topShare = n => ranked.slice(0, n).reduce((a, s) => a + b.bySensor[s], 0);
+  const others = d.models.filter(m => m.id !== b.id);
+  const famName = k => familyLabel(manifest, k);
+  const short = k => ({ logreg: "Log. reg.", pcalr: "PCA+LR", tree: "Tree", rf: "Forest", ada: "AdaBoost", xgb: "XGBoost", gb: "Grad. boost" }[k] || k);
+  // Agreement: how many of the best model's top 10 sensors are in each other model's top 10.
+  const top10 = new Set(ranked.slice(0, 10));
+  const overlap = m => [...f].sort((x, y) => m.bySensor[y] - m.bySensor[x]).slice(0, 10).filter(s => top10.has(s)).length;
+  const ov = others.map(m => [m, overlap(m)]);
+  const k = b.byKind, kindTop = KINDS.reduce((a, c) => (k[c[0]] > k[a[0]] ? c : a));
+  const nm = s => `${esc(s)} (${esc(inputInfo(s).desc)})`;
+
+  body.innerHTML = `
+    <h3>The best ${task} model: ${esc(b.model.label)}</h3>
+    <p class="note">${b.method === "gain" ? "XGBoost gain: how much the model's loss drops, in total, at splits on each input." :
+      "Share of the model's importance per sensor."} Shares add up to 100% over the 52 sensors.</p>
+    <div class="plot"><div id="chart-sens-top"></div></div>
+    ${b.hist ? `<h3>Current reading or recent behaviour?</h3>
+    <div class="plot"><div id="legend-sens-kind"></div><div id="chart-sens-kind"></div></div>` : ""}
+    <h3>Do the other models agree?</h3>
+    <p class="note">The same 15 sensors in the best model of each family, each column scaled to its own largest sensor. Logistic
+      regression and PCA + logistic regression use coefficient size on standardized inputs, the tree models their importances; gradient
+      boosting (scikit-learn) and PCA monitoring have no per-sensor weights.</p>
+    <div class="plot"><div id="chart-sens-agree"></div></div>
+    <p class="callout" id="sens-callout"></p>
+    <p class="note">Importance shows what a model uses, not what causes a fault. Correlated sensors share credit (a model may lean on one
+      of two nearly identical readings and ignore the other), and different importance measures are not directly comparable, so look
+      at the ranking rather than the exact numbers.</p>`;
+
+  barChart($("chart-sens-top"), {
+    categories: top.map(s => `${s} · ${inputInfo(s).desc}`),
+    series: [{ name: "share", color: COLORS.data, values: top.map(s => b.bySensor[s]) }],
+    x: { domain: [0, b.bySensor[top[0]] * 1.15], fmt: x => pct(x, 0), label: "Share of the model's importance" },
+    labelWidth: 260, valueFmt: x => pct(x, 1),
+    tip: i => { const s = top[i], p = b.perSensorKind[s];
+      return `<b>${esc(s)}</b> · ${esc(inputInfo(s).desc)}<br>Share: <b>${pct(b.bySensor[s], 1)}</b>${b.hist ? `<br>${KINDS.map(([kk, l]) =>
+        `${l}: ${pct(p[kk], 1)}`).join("<br>")}` : ""}`; },
+  });
+
+  if (b.hist) {
+    const both = ["detection", "diagnosis"].map(t => sens.cache[t]?.best).filter(m => m?.hist);
+    legend($("legend-sens-kind"), both.map((m, i) => ({ label: m === b ? `Best ${task} model` : `Best ${task === "detection" ? "diagnosis" : "detection"} model`, color: i ? COLORS.b : COLORS.data })));
+    barChart($("chart-sens-kind"), {
+      categories: KINDS.map(c => c[1]),
+      series: both.map((m, i) => ({ name: m.id, color: i ? COLORS.b : COLORS.data, values: KINDS.map(c => m.byKind[c[0]]) })),
+      x: { domain: [0, 1], fmt: x => pct(x, 0), label: "Share of the best model's importance" },
+      labelWidth: 200, valueFmt: x => pct(x, 0),
+    });
+    if (both.length < 2) loadSensorTask(manifest, task === "detection" ? "diagnosis" : "detection").then(() => {
+      if (sens.task === task) drawSensorSummary(manifest); }).catch(() => {});
+  }
+
+  const cols = [b, ...others];
+  const mx = cols.map(m => Math.max(...f.map(s => m.bySensor[s])) || 1);
+  const rankIn = (m, s) => [...f].sort((x, y) => m.bySensor[y] - m.bySensor[x]).indexOf(s) + 1;
+  $("chart-sens-agree").innerHTML = `<div class="table-wrap"><table class="sens-agree"><thead><tr><th>Sensor</th>${cols.map(m =>
+      `<th class="n" title="${esc(m.model?.label || famName(m.fam))}">${esc(short(m.fam))}</th>`).join("")}</tr></thead><tbody>${
+    top.map(s => `<tr><td title="${esc(inputInfo(s).desc)}"><code>${esc(s)}</code> <span class="note">${esc(inputInfo(s).desc)}</span></td>${
+      cols.map((m, c) => { const v = m.bySensor[s] / mx[c], a = Math.pow(Math.min(1, v), 0.6);
+        return `<td class="n" title="${esc(m.model?.label || famName(m.fam))}: ${pct(m.bySensor[s], 1)} of its weight, rank ${rankIn(m, s)} of 52"
+          style="background:color-mix(in srgb, var(--c-heat) ${(a * 100).toFixed(0)}%, var(--surface));color:${a > 0.55 ? "var(--on-heat)" : "var(--text)"}">${rankIn(m, s)}</td>`; }).join("")}</tr>`).join("")}
+    </tbody></table></div><p class="note">Numbers are each sensor's rank (1 = most important) in that model; a stronger colour = a larger share of the model's weight.</p>`;
+
+  const avgOv = ov.length ? ov.reduce((a, x) => a + x[1], 0) / ov.length : null;
+  $("sens-callout").innerHTML = `<b>A handful of sensors carry most of the weight.</b> For the best ${task} model, the top 5 sensors
+    hold ${pct(topShare(5), 0)} of the importance and the top 10 hold ${pct(topShare(10), 0)}; the leaders are ${ranked.slice(0, 3).map(nm).join(", ")}.
+    ${b.hist ? `${kindTop[0] === "now" ? "Most of it comes from the <b>current readings</b>" : kindTop[0] === "std"
+      ? "The largest share comes from <b>how much a reading varies</b>" : "The largest share comes from <b>the rolling means</b>"}
+      (${KINDS.map(([kk, l]) => `${l.toLowerCase()} ${pct(k[kk], 0)}`).join(", ")}).` : ""}
+    ${avgOv != null ? `The other families share on average ${num(avgOv, 1)} of its top 10 sensors (most: ${esc(famName(ov.reduce((a, x) => (x[1] > a[1] ? x : a))[0].fam))},
+      ${ov.reduce((a, x) => (x[1] > a[1] ? x : a))[1]}; fewest: ${esc(famName(ov.reduce((a, x) => (x[1] < a[1] ? x : a))[0].fam))}, ${ov.reduce((a, x) => (x[1] < a[1] ? x : a))[1]}).` : ""}`;
 }
 
 // ---------- The whole system (end to end) ----------

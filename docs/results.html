@@ -36,6 +36,16 @@
     <div class="table-wrap" style="margin-top:14px"><table id="families-table"></table></div>
   </section>
 
+  <section class="section" id="sensors" data-toc="Which sensors matter">
+    <h2>Which sensors matter?</h2>
+    <p class="intro">Which of the 52 sensors the best models lean on, whether different kinds of model agree, and whether it is a
+      sensor's current reading or its recent behaviour that counts. Each history sensor feeds three inputs (its current reading,
+      its rolling mean and its rolling standard deviation); here they are added up per sensor.</p>
+    <div class="control" style="margin-bottom:10px"><div class="control-head">Task</div><div class="seg" id="sens-task">
+      <button type="button" data-v="detection" class="on">Detection</button><button type="button" data-v="diagnosis">Diagnosis</button></div></div>
+    <div id="sens-body"></div>
+  </section>
+
   <section class="section" id="e2e" data-toc="The whole system">
     <h2>The whole system: detection and diagnosis together</h2>
     <p class="intro">Every row gets one of 21 answers: "no fault" or the fault number. Two ways to get there, both held to

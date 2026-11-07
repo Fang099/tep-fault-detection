@@ -334,3 +334,8 @@ footer { color: var(--muted); font-size: 13.5px; padding: 24px; border-top: 1px 
   .plant-svg svg { min-width: 640px; }
   .plant-info { border-left: 0; border-top: 1px solid var(--border); }
 }
+
+/* Which sensors matter: agreement table */
+table.sens-agree td.n, table.sens-agree th.n { text-align: center; min-width: 52px; }
+table.sens-agree td:first-child { white-space: nowrap; }
+@media (max-width: 640px) { table.sens-agree td:first-child .note { display: none; } }
