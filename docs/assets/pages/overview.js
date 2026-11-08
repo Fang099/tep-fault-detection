@@ -57,21 +57,25 @@ $("fault-table").innerHTML = `<thead><tr><th class="n">Fault</th><th>Process var
 
 // ---------- Label timelines ----------
 function timeline(title, total, onset, sub) {
+  const h = s => `${+(s * 3 / 60).toFixed(1)} h`;
   const normalW = onset == null ? 100 : (onset / total) * 100;
-  return `<div style="margin:0 0 18px">
+  return `<div style="margin:0 0 18px;width:${Math.max(52, (total / 960) * 100).toFixed(1)}%;min-width:min(100%, 330px)">
     <div style="display:flex;justify-content:space-between;gap:12px;font-size:15px"><b>${title}</b><span class="note">${sub}</span></div>
     <div style="display:flex;height:24px;border-radius:4px;overflow:hidden;margin:5px 0 3px;border:1px solid var(--border)">
       <div style="width:${normalW}%;background:${COLORS.normal}"></div>
       ${onset == null ? "" : `<div style="flex:1;background:${COLORS.fault}"></div>`}
     </div>
-    <div class="ticks" style="position:relative"><span>sample 1</span>${onset == null ? "" :
-      `<span style="position:absolute;left:${normalW}%;padding-left:5px;border-left:2px solid ${COLORS.fault}">fault starts after sample ${onset}</span>`}<span>sample ${total}</span></div>
+    <div class="ticks" style="position:relative"><span>sample 1 (0 h)</span>${onset == null || normalW < 25 ? "" :
+      `<span style="position:absolute;left:${normalW}%;padding-left:5px;border-left:2px solid ${COLORS.fault}">fault starts after sample ${onset} (${h(onset)})</span>`}<span>sample ${total} (${h(total)})</span></div>
+    ${onset != null && normalW < 25 ? `<div class="ticks" style="position:relative;margin-top:2px"><span style="margin-left:${normalW}%;padding-left:5px;border-left:2px solid ${COLORS.fault}">fault starts after sample ${onset} (${h(onset)})</span></div>` : ""}
   </div>`;
 }
 $("timelines").innerHTML = `
   <div class="legend" style="margin:0 0 12px"><span style="--c:${COLORS.normal}">labelled normal (0)</span><span style="--c:${COLORS.fault}">labelled faulty (1)</span></div>
-  ${timeline("Fault-free run (training or test)", 500, null, "every row normal")}
+  <p class="note" style="margin:-4px 0 12px">Bars are drawn to scale: a training run (25 h) is about half as long as a test run (48 h).</p>
+  ${timeline("Fault-free training run", 500, null, "25 hours, every row normal")}
   ${timeline("Faulty training run", 500, 20, "25 hours, fault after 1 hour")}
+  ${timeline("Fault-free test run", 960, null, "48 hours, every row normal")}
   ${timeline("Faulty test run", 960, 160, "48 hours, fault after 8 hours")}`;
 
 // ---------- Numbers from the results ----------
@@ -103,6 +107,32 @@ loadManifest().then(manifest => {
   ].join("");
 }).catch(showError);
 
+// ---------- Measured: a random row split against the split by run ----------
+getJSON("data/split_demo.json").then(d => {
+  const row = (task, key, label, fmt, metric) => {
+    const r = d[task]?.[key];
+    if (!r) return "";
+    const diff = r.random[metric] - r.run[metric];
+    return `<tr><td>${esc(label)}</td><td class="n">${fmt(r.run[metric])}</td><td class="n">${fmt(r.random[metric])}</td>
+      <td class="n">${diff >= 0 ? "+" : "−"}${task === "detection" ? `${num(Math.abs(diff) * 100, 1)} pts` : num(Math.abs(diff), 3)}</td></tr>`;
+  };
+  const head = t => `<tr><th>${t}</th><th class="n">Unseen runs<br><span class="note">(this site)</span></th><th class="n">Random rows</th><th class="n">Random split<br>looks better by</th></tr>`;
+  const P = v => pct(v), F = v => num(v, 3), id = d.identical_val_rows;
+  const gap = k => d.detection[k] ? d.detection[k].random.recall - d.detection[k].run.recall : 0;
+  $("split-demo").innerHTML = `<h4 style="margin:14px 0 4px">Measured: what a random split would have reported</h4>
+    <p class="note" style="margin:0 0 6px">The same models with identical settings, each trained on ${int(d.train_rows)} rows, validated two
+      ways: on whole runs they never saw (as everywhere on this site), and on ${pct(d.val_share, 0)} of the rows held out at random.</p>
+    <div class="table-wrap"><table>
+      <thead>${head("Detection: faults caught at 5% false alarms (recall)")}</thead><tbody>
+      ${Object.entries(d.models).map(([k, l]) => row("detection", k, l, P, "recall")).join("")}</tbody>
+      <thead>${head("Diagnosis: macro-F1")}</thead><tbody>
+      ${Object.entries(d.models).map(([k, l]) => row("diagnosis", k, l, F, "macro_F1")).join("")}</tbody></table></div>
+    <p class="note" style="margin:6px 0 16px">${id ? `With the random split, ${int(id.random)} of the ${int(id.random_rows)} validation rows
+      (${pct(id.random / id.random_rows)}) are exact copies of a training row; with the split by run, ${int(id.run)}. ` : ""}
+      ${gap("tree") > gap("logreg") + 0.01 ? "The flexible tree gains the most: it can memorize individual rows, so near-copies in training inflate its score. The linear model can't memorize, so it barely changes." :
+        "The difference shows how much of a random-split score comes from recognizing runs already seen in training."}</p>`;
+}).catch(() => {});
+
 function ordinal(k) { return k === 1 ? "" : k === 2 ? "2nd" : k === 3 ? "3rd" : `${k}th`; }
 
 // ---------- Explore the data ----------
@@ -123,7 +153,7 @@ function initExplore() {
   $("quality-tiles").innerHTML = [
     tile("Rows checked", int(q.rows), `${int(q.runs)} runs`),
     tile("Missing values", int(q.missing_values)),
-    tile("Repeated rows", int(q.duplicate_rows), q.rows ? `${pct(q.duplicate_rows / q.rows)} of rows` : ""),
+    tile("Repeated rows (duplicates)", int(q.duplicate_rows), q.rows ? `${pct(q.duplicate_rows / q.rows)} of rows` : ""),
     tile("Constant variables", String(q.constant_columns.length)),
     tile("Normal / faulty rows", `${pct(q.class_counts.normal / q.rows, 0)} / ${pct(q.class_counts.faulty / q.rows, 0)}`),
     ...(copies != null ? [tile("Validation rows also in training", int(copies), copies === 0 ? "leakage check passed" : "should be 0", copies === 0 ? "" : "warn")] : []),
@@ -195,7 +225,7 @@ function renderTrace() {
   const c = ex.changes.find(x => x.f === f);
   $("trace-tiles").innerHTML = [
     tile("Mean shift after the fault", `${c.shift >= 0 ? "+" : ""}${num(c.shift, 1)}σ`),
-    tile("Spread vs normal", `×${num(c.spread, 2)}`),
+    tile("Spread vs normal", `×${num(c.spread, 2)}`, "std. dev. after the fault ÷ normal std. dev."),
     tile("Normal mean", String(+st.mean.toPrecision(5))),
     tile("Normal σ", String(+st.std.toPrecision(3))),
   ].join("");
@@ -213,13 +243,20 @@ function renderCorr() {
   const pairs = [];
   for (let i = 0; i < feats.length; i++) for (let j = i + 1; j < feats.length; j++) pairs.push([i, j, C[i][j]]);
   pairs.sort((a, b) => Math.abs(b[2]) - Math.abs(a[2]));
+  // Measured variables (xmeas) first, then manipulated ones (xmv): label a few numbers in each group.
+  const nMeas = feats.filter(f => f.startsWith("xmeas")).length, phone = window.innerWidth < 600;
+  const numOf = f => f.replace(/^\D+_/, "");
+  const marks = feats.map((f, i) => i).filter(i => { const k = +numOf(feats[i]); return i < nMeas ? (k === 1 || (k % (phone ? 20 : 10) === 0 && k <= nMeas - 6))
+    : (k === 1 || k === feats.length - nMeas || (!phone && k === 6)); });
   heatmap($("chart-corr"), {
-    matrix: C, rowLabels: feats.map(short), colLabels: feats.map(short), diverging: true, diagonal: false, labelEvery: window.innerWidth < 600 ? 10 : 5,
+    matrix: C, rowLabels: feats.map(numOf), colLabels: feats.map(numOf), diverging: true, diagonal: false, labelAt: marks,
+    groups: [{ from: 0, to: nMeas - 1, label: "Measured (xmeas)", short: "xmeas" }, { from: nMeas, to: feats.length - 1, label: "Manipulated (xmv)", short: "xmv" }],
     ariaLabel: "correlation matrix of the 52 variables", rowTitle: "", colTitle: "",
-    tip: (r, c) => `<b>${feats[r]}</b> ${esc(VARIABLES[feats[r]])}<br><b>${feats[c]}</b> ${esc(VARIABLES[feats[c]])}<br>correlation <b>${num(C[r][c], 2)}</b>`,
+    tip: (r, c) => `<b>${feats[r]}</b> ${esc(VARIABLES[feats[r]])}<br><b>${feats[c]}</b> ${esc(VARIABLES[feats[c]])}<br>correlation <b>${num(C[r][c], 3)}</b>`,
     onClick: (r, c) => { ex.pinnedPair = [r, c]; ex.sensor = feats[r]; $("trace-sensor").value = ex.sensor; renderTrace(); renderCorrPanel(pairs);
                          document.getElementById("chart-trace").scrollIntoView({ behavior: "smooth", block: "center" }); },
   });
+  $("chart-corr").insertAdjacentHTML("beforeend", `<div class="corr-scale"><span>−1 opposite</span><i></i><span>0 unrelated</span><i class="pos"></i><span>+1 together</span></div>`);
   renderCorrPanel(pairs);
 }
 
@@ -228,10 +265,14 @@ function renderCorrPanel(pairs) {
   const strong = pairs.filter(p => Math.abs(p[2]) >= 0.8).length;
   $("corr-panel").innerHTML = `<h3 style="margin-top:0">Most strongly related pairs</h3>
     <table><tbody>${pairs.slice(0, 6).map(([i, j, r]) => `<tr><td>${feats[i]} and ${feats[j]}<div class="note">${esc(VARIABLES[feats[i]])} · ${esc(VARIABLES[feats[j]])}</div></td>
-      <td class="n">${num(r, 2)}</td></tr>`).join("")}</tbody></table>
+      <td class="n">${num(r, 3)}</td></tr>`).join("")}</tbody></table>
     <p class="note" style="margin:10px 0 0">${strong === 0 ? "No pair reaches a correlation of 0.8 in this data." : `${strong} pairs have`} ${strong === 0 ? "" : "a correlation of 0.8 or more in either direction."} Many sensors measure
       linked parts of the plant, so the 52 readings carry much less independent information than their number suggests. That is what PCA
-      exploits, and why a model's individual coefficients can be unstable without regularization.</p>`;
+      exploits, and why a model's individual coefficients can be unstable without regularization (this is called <i>multicollinearity</i>).</p>
+    <p class="note" style="margin:8px 0 0"><b>Can a correlation really be ±1?</b> Yes, when one variable is set directly from another.
+      The plant runs under automatic control: for example, the separator level (xmeas_12) is held steady by a controller that opens
+      the drain valve (xmv_7) in proportion to the measured level, so the two correlate at +1.000. The strongest negative pair is
+      xmeas_17 and xmv_11 at −0.999 (shown as −1.00 when rounded to two decimals).</p>`;
 }
 
 function renderPca() {

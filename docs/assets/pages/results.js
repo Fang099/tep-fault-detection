@@ -131,12 +131,18 @@ function renderFindings(manifest) {
     `<b>Detection speed varies enormously by fault:</b> from minutes for sudden faults to many hours, or never, for subtle ones.
      See <a href="detection.html#speed">Detection</a>.`,
   ];
-  $("findings-list").innerHTML = items.filter(Boolean).map(t => `<li>${t}</li>`).join("");
+  // The five headline findings first; the rest under "More findings".
+  const KEY = [3, 7, 8, 0, 2], ordered = [...KEY.map(i => items[i]), ...items.filter((_, i) => !KEY.includes(i))].filter(Boolean);
+  const li = t => `<li>${t}</li>`;
+  $("findings-list").innerHTML = ordered.slice(0, KEY.length).map(li).join("");
+  $("findings-more").innerHTML = ordered.length > KEY.length ? `<details class="learn"><summary><span class="learn-tag">More</span>${ordered.length - KEY.length} more findings</summary>
+    <div class="learn-body"><ul class="tight">${ordered.slice(KEY.length).map(li).join("")}</ul></div></details>` : "";
 }
 
 // ---------- Best model of each family ----------
 const fam = { far: OFFICIAL_FAR, all: null };
-const ciCell = (ci, fmt) => (ci && ci[1] > ci[0] ? `<div class="note">${fmt(ci[0])} – ${fmt(ci[1])}</div>` : "");
+// 95% bootstrap interval as a small "±" marker with the range in its tooltip (keeps table rows one line high).
+const ciCell = (ci, fmt) => (ci && ci[1] > ci[0] ? ` <span class="ci-mark" tabindex="0" title="95% interval over validation runs: ${fmt(ci[0])} – ${fmt(ci[1])}">±</span>` : "");
 
 function renderFamilies(manifest) {
   const official = Math.abs(fam.far - OFFICIAL_FAR) < 1e-9, farTxt = `${+(100 * fam.far).toFixed(1)}%`;
@@ -159,7 +165,7 @@ function renderFamilies(manifest) {
   const top = rows.reduce((a, b) => ((b.rec ?? -1) > (a.rec ?? -1) ? b : a));
   const official5 = rows.reduce((a, b) => ((b.det?.val.recall ?? -1) > (a.det?.val.recall ?? -1) ? b : a));
   $("fam-status").innerHTML = official
-    ? "Detection ranked at the official 5% false alarm rate." + (rows.some(r => r.det?.ci) ? " Small grey ranges are 95% bootstrap intervals over validation runs." : "")
+    ? "Detection ranked at the official 5% false alarm rate." + (rows.some(r => r.det?.ci) ? " Hover over ± for a 95% bootstrap interval over validation runs." : "")
     : `Detection re-ranked at ${farTxt} false alarms: within each family the best settings are picked again at this rate. ${
         top.f.key === official5.f.key ? `<b>${esc(top.f.label)} stays on top.</b>` : `<b>${esc(top.f.label)} moves ahead of ${esc(official5.f.label)}</b>, which leads at 5%.`}`;
   $("families-table").innerHTML = `<thead><tr><th>Model</th><th>Best detection settings</th><th class="n">Caught at ${farTxt} false alarms</th>
@@ -236,8 +242,8 @@ async function renderTest(manifest) {
       diaIds.map(id => diaRow(label("diagnosis", id), test.diagnosis[id])).join("")}${
       Object.entries(av.diagnosis || {}).map(([id, r]) => diaRow(`${label("diagnosis", id)} <span class="note">as validated</span>`, r, true)).join("")}</tbody></table></div>
     ${testCallout(manifest, test)}
-    <h3>Validation against test, per fault (best detection model)</h3>
-    <div class="plot"><div id="legend-test"></div><div id="chart-test"></div></div>`;
+    <details class="learn"><summary><span class="learn-tag">Chart</span>Validation against test, fault by fault (best detection model)</summary>
+      <div class="learn-body"><div class="plot"><div id="legend-test"></div><div id="chart-test"></div></div></div></details>`;
 
   const best = bestModel(manifest, "detection");
   const [valFile, testFile] = await Promise.all([loadModel("detection", best.id), loadTestModel("detection", best.id)]);
@@ -322,11 +328,12 @@ async function drawSensorSummary(manifest) {
     <div class="plot"><div id="chart-sens-top"></div></div>
     ${b.hist ? `<h3>Current reading or recent behaviour?</h3>
     <div class="plot"><div id="legend-sens-kind"></div><div id="chart-sens-kind"></div></div>` : ""}
-    <h3>Do the other models agree?</h3>
-    <p class="note">The same 15 sensors in the best model of each family, each column scaled to its own largest sensor. Logistic
+    <details class="learn"><summary><span class="learn-tag">Table</span>Do the other models agree? Rank of these sensors in every model</summary>
+    <div class="learn-body">
+    <p class="note" style="margin-top:0">The same 15 sensors in the best model of each family, each column scaled to its own largest sensor. Logistic
       regression and PCA + logistic regression use coefficient size on standardized inputs, the tree models their importances; gradient
       boosting (scikit-learn), PCA monitoring and the RBF SVM have no per-sensor weights.</p>
-    <div class="plot"><div id="chart-sens-agree"></div></div>
+    <div class="plot"><div id="chart-sens-agree"></div></div></div></details>
     <p class="callout" id="sens-callout"></p>
     <p class="note">Importance shows what a model uses, not what causes a fault. Correlated sensors share credit (a model may lean on one
       of two nearly identical readings and ignore the other), and different importance measures are not directly comparable, so look
@@ -389,7 +396,7 @@ async function renderE2E(manifest) {
   }
   e2e.data = data;
   const m = data.models;
-  const ci = (v, c) => (c && c[1] > c[0] ? `<div class="note">${num(c[0], 3)} – ${num(c[1], 3)}</div>` : "");
+  const ci = (v, c) => ciCell(c, x => num(x, 3));
   const row = (key, name, d) => `<tr class="${key === "chain" ? "highlight" : ""}"><td>${name}</td>
       <td class="n">${num(d.macro_F1, 3)}${ci(d.macro_F1, d.ci?.macro_F1)}</td><td class="n">${pct(d.accuracy)}</td>
       <td class="n">${pct(d.false_alarm_rate)}</td><td class="n">${pct(d.faults_caught)}</td><td class="n">${pct(d.right_fault)}</td></tr>`;
@@ -415,14 +422,16 @@ async function renderE2E(manifest) {
       ${(data.test.single.macro_F1 - data.test.chain.macro_F1) * gap > 0 ? "the order holds" : "the order changes"}: ${num(data.test.chain.macro_F1, 3)} for the chain against ${num(data.test.single.macro_F1, 3)} for one model.` : ""}
       Compared with diagnosis alone (which only ever sees truly faulty rows), the chain shows the real cost of missed detections and
       false alarms.</p>
-    <div class="modelbar" style="position:static;margin-top:16px">
+    <details class="learn"><summary><span class="learn-tag">Chart</span>Where each answer ends up (21 × 21 confusion matrix)</summary>
+    <div class="learn-body">
+    <div class="modelbar" style="position:static;margin-top:4px">
       <div class="control"><div class="control-head">Approach</div><div class="seg" id="e2e-which">${E2E_ROWS.map(([k, n]) =>
         `<button type="button" data-v="${k}" class="${k === e2e.which ? "on" : ""}">${n}</button>`).join("")}</div></div>
       ${data.test ? `<div class="control"><div class="control-head">Data</div><div class="seg" id="e2e-split">
         <button type="button" data-v="val" class="on">Validation</button><button type="button" data-v="test">Final test</button></div></div>` : ""}
     </div>
     <div class="plot"><div class="plot-title" id="e2e-title"></div><div id="chart-e2e"></div></div>
-    <p class="note" id="e2e-note"></p>`;
+    <p class="note" id="e2e-note"></p></div></details>`;
   const seg = (id, key) => $(id)?.addEventListener("click", ev => {
     const b = ev.target.closest("button"); if (!b) return;
     e2e[key] = b.dataset.v;
@@ -461,7 +470,7 @@ function renderDataCurve(manifest) {
                  ["diagnosis", "Diagnosis: macro-F1", COLORS.data, v => num(v, 3)]].filter(t => lc[t[0]]);
   body.innerHTML = `
     <p class="note">Detection model: ${esc(lc.detection?.label || "")}. Diagnosis model: ${esc(lc.diagnosis?.label || "")}.</p>
-    <div class="split">
+    <div class="split even">
       <div class="plot"><div class="plot-title">Fewer simulation runs</div><div id="legend-lc1"></div><div id="chart-lc1"></div></div>
       <div class="plot"><div class="plot-title">Sparser sampling inside each run</div><div id="legend-lc2"></div><div id="chart-lc2"></div></div>
     </div>
@@ -469,11 +478,14 @@ function renderDataCurve(manifest) {
   const items = tasks.map(([, n, c]) => ({ label: n, color: c }));
   const ciTip = (p, fmt) => (p.ci && p.ci[1] > p.ci[0] ? `<br>95% interval ${fmt(p.ci[0])} – ${fmt(p.ci[1])}` : "");
   const shares = Object.keys(lc.detection.runs).map(Number).sort((a, b) => a - b);
+  // Zoom the score axis to the range the points use, so differences of a few points are visible (not a 0–100% axis).
+  const allVals = tasks.flatMap(([t]) => [...Object.values(lc[t].runs), ...Object.values(lc[t].stride)].map(p => p.metric));
+  const yDom = [Math.max(0, Math.floor((Math.min(...allVals) - 0.02) * 20) / 20), Math.min(1, Math.ceil((Math.max(...allVals) + 0.01) * 20) / 20)];
   legend($("legend-lc1"), items);
   lineChart($("chart-lc1"), {
     height: 280,
     x: { type: "log", domain: [shares[0] * 0.8, 1.15], ticks: shares, fmt: x => pct(x, 0), label: "Share of training simulation runs used (log scale)" },
-    y: { domain: [0, 1], fmt: y => pct(y, 0), label: "Validation score" },
+    y: { domain: yDom, fmt: y => pct(y, 0), label: "Validation score (axis zoomed)" },
     series: tasks.map(([t, n, c, fmt]) => ({ name: n, color: c, width: 2.2, marker: 4,
       points: shares.map(sh => [sh, lc[t].runs[String(sh)].metric, lc[t].runs[String(sh)], fmt]) })),
     tip: (s_, p) => `<b>${s_.name}</b><br>${p[2].sims} of ${lc.detection.train_sims} simulation numbers (${int(p[2].rows)} training rows)<br>score <b>${p[3](p[1])}</b>${ciTip(p[2], p[3])}`,
@@ -485,7 +497,7 @@ function renderDataCurve(manifest) {
     height: 280,
     x: { type: "log", domain: [Math.max(...strides) * 1.25, Math.min(...strides) * 0.8], ticks: strides,
          fmt: k => (k === 1 ? "every" : `1 in ${k}`), label: "Samples used for training (every 3 min = every sample)" },
-    y: { domain: [0, 1], fmt: y => pct(y, 0), label: "Validation score" },
+    y: { domain: yDom, fmt: y => pct(y, 0), label: "Validation score (axis zoomed)" },
     series: tasks.map(([t, n, c, fmt]) => ({ name: n, color: c, width: 2.2, marker: 4,
       points: strides.map(k => [k, lc[t].stride[String(k)].metric, lc[t].stride[String(k)], fmt]) })),
     tip: (s_, p) => `<b>${s_.name}</b><br>every ${p[0] === 1 ? "" : p[0] + "th "}sample: one every ${fmtMinutes(p[0] * 3)} (${int(p[2].rows)} training rows)<br>score <b>${p[3](p[1])}</b>${ciTip(p[2], p[3])}`,

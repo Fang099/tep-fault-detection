@@ -22,12 +22,19 @@
 <aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
   <section class="section" id="test" data-toc="Final test">
-    <h2>Final test</h2>
+    <h2>Final test <span class="term">(held-out test set)</span></h2>
     <div id="test-body"></div>
   </section>
 
+  <section class="section" id="findings" data-toc="Findings">
+    <h2>Findings</h2>
+    <p class="data-note" id="data-note"></p>
+    <ul class="tight" id="findings-list"></ul>
+    <div id="findings-more"></div>
+  </section>
+
   <section class="section" id="families" data-toc="Best of each model">
-    <h2>The best of each model</h2>
+    <h2>The best of each model <span class="term">(model selection)</span></h2>
     <p class="intro">For every model family, the settings that scored best on validation. Click a model to open it in its explorer.
       Change the false alarm rate to see whether the ranking depends on it; the official choice stays at 5%.</p>
     <div class="control" style="margin-bottom:6px"><div class="control-head">Detection false alarm rate (★ = official)</div><div id="fam-far"></div></div>
@@ -37,7 +44,7 @@
   </section>
 
   <section class="section" id="sensors" data-toc="Which sensors matter">
-    <h2>Which sensors matter?</h2>
+    <h2>Which sensors matter? <span class="term">(feature importance)</span></h2>
     <p class="intro">Which of the 52 sensors the best models lean on, whether different kinds of model agree, and whether it is a
       sensor's current reading or its recent behaviour that counts. Each history sensor feeds three inputs (its current reading,
       its rolling mean and its rolling standard deviation); here they are added up per sensor.</p>
@@ -47,7 +54,7 @@
   </section>
 
   <section class="section" id="e2e" data-toc="The whole system">
-    <h2>The whole system: detection and diagnosis together</h2>
+    <h2>The whole system: detection and diagnosis together <span class="term">(end-to-end evaluation)</span></h2>
     <p class="intro">Every row gets one of 21 answers: "no fault" or the fault number. Two ways to get there, both held to
       5% false alarms on validation:</p>
     <ul class="tight">
@@ -61,18 +68,13 @@
   </section>
 
   <section class="section" id="data" data-toc="How much data">
-    <h2>How much training data is enough?</h2>
+    <h2>How much training data is enough? <span class="term">(learning curve)</span></h2>
     <p class="intro">The best detection and diagnosis models, retrained with the same settings on less data, then scored on the same
       validation runs. Two different kinds of "less": fewer simulation runs (each run is a new random disturbance pattern) and sparser
       sampling inside the same runs (neighbouring samples are only 3 minutes apart).</p>
     <div id="data-body"></div>
   </section>
 
-  <section class="section" id="findings" data-toc="Findings">
-    <h2>Findings from validation</h2>
-    <p class="data-note" id="data-note"></p>
-    <ul class="tight" id="findings-list"></ul>
-  </section>
 
   <section class="section" id="limits" data-toc="Limitations">
     <h2>Limitations</h2>

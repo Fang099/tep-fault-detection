@@ -410,12 +410,16 @@ function renderScores() {
   legend($("legend-scores"), items);
 
   const margin = state.model.score_kind === "margin";      // SVM: logistic of the distance from the boundary
-  const lo = stat ? scoreX(v.edges[0]) : Math.max(-12, logit(v.edges[0]));
-  const hi = stat ? scoreX(v.edges[v.B]) : Math.min(12, logit(v.edges[v.B]));
+  // The axis reaches as far as the scores do (the logit is capped at ±16.1, i.e. 1 in 10 million), so rows the model
+  // is certain about are drawn instead of falling off the edge.
+  const lo = stat ? scoreX(v.edges[0]) : Math.max(-16.2, logit(v.edges[0]));
+  const hi = stat ? scoreX(v.edges[v.B]) : Math.min(16.2, logit(v.edges[v.B]));
+  const probTicks = [1e-6, 1e-5, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999, 0.9999, 0.99999, 0.999999]
+    .filter((t, i) => el.clientWidth >= 640 || [0, 2, 4, 6, 8, 10, 12].includes(i));
   const dStep = margin ? [0.25, 0.5, 1, 2, 5].find(s => (hi - lo) / s <= 8) || 10 : 1;
   const ticks = stat ? logTicks(lo, hi)
     : margin ? Array.from({ length: Math.floor(hi / dStep) - Math.ceil(lo / dStep) + 1 }, (_, i) => 1 / (1 + Math.exp(-(Math.ceil(lo / dStep) + i) * dStep)))
-    : PROB_TICKS.filter(p => logit(p) >= lo && logit(p) <= hi);
+    : probTicks.filter(p => logit(p) >= lo && logit(p) <= hi);
   const ys = series.flatMap(s => s.points.map(p => p[1])).sort((a, b) => a - b);
   const yMax = ys[Math.floor(ys.length * 0.995)] * 1.1 || 1;
   const r = v.at(state.t);
@@ -428,9 +432,16 @@ function renderScores() {
     vlines: r.threshold == null ? [] : [{ x: scoreX(r.threshold), color: COLORS.amber, label: "threshold", width: 2 }],
   });
 
+  // Rows the model is (almost) certain about: score of 0.9999 or more.
+  const sure = (counts, total) => total ? counts.reduce((a, c, k) => a + (v.edges[k] >= 0.9999 ? c : 0), 0) / total : 0;
+  const sureF = stat || margin ? 0 : sure(faultCounts, v.totalF), sureN = stat || margin ? 0 : sure(v.normal, v.totalN);
   $("callout-scores").innerHTML = `<b>The overlap is the problem.</b> Normal rows to the right of the line are false alarms
     (${pct(r.far)} of normal rows); faulty rows to the left are missed (${pct(1 - r.recall)} of faulty rows).
-    Many faulty rows score just like normal ones, because a single snapshot of a slowly developing fault can look normal.`;
+    Many faulty rows score just like normal ones, because a single snapshot of a slowly developing fault can look normal.
+    ${sureF >= 0.05 ? `<br><b>The peak at the far right is real:</b> ${pct(sureF)} of faulty rows score 0.9999 or more (against ${pct(sureN, 2)}
+      of normal rows). These are rows of faults that change the plant unmistakably, which the model is certain about. Because the axis
+      is spaced by log-odds, 0.99, 0.9999 and 0.999999 are equally far apart, so that certainty gets room of its own; rows in between
+      are rarer, since a row tends to be either clearly faulty or ambiguous.` : ""}`;
 }
 
 // ---------- ROC ----------

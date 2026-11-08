@@ -123,6 +123,9 @@ parser.add_argument("--hist-windows", default="2,5,20,40",
 parser.add_argument("--svm-rows", default="5000,20000",
                     help="training-subset sizes for the RBF SVM (random rows, nested); its cost grows with the square of this")
 parser.add_argument("--svm-c", default="1,10", help="values of C (margin softness) for the RBF SVM")
+parser.add_argument("--split-demo", default="0",
+                    help="1 = also measure what a random row split would report (logistic regression and a deep tree, "
+                         "trained both ways on the same number of rows); written to split_demo.json")
 parser.add_argument("--final-test", action="store_true", help="retrain the chosen models and evaluate on test")
 parser.add_argument("--force-retrain", action="store_true",
                     help="retrain the families listed in --families even if already exported (others are kept as they are)")
@@ -277,7 +280,8 @@ print(train_all["target"].value_counts().rename("rows"))
 # simulation stay on the same side. Each fault type still keeps 80% of its runs for training.
 
 sim_numbers = np.sort(train_all["simulationRun"].unique())
-_, val_sims = train_test_split(sim_numbers, test_size=0.2, random_state=SEED)
+VAL_FRACTION = 0.2                       # share of simulation numbers held out for validation
+_, val_sims = train_test_split(sim_numbers, test_size=VAL_FRACTION, random_state=SEED)
 is_val = train_all["simulationRun"].isin(val_sims)
 train_df = train_all[~is_val].reset_index(drop=True)
 val_df = train_all[is_val].reset_index(drop=True)
@@ -1705,6 +1709,69 @@ def write_manifest(test_results=None):
         "end_to_end": e2e_summary(json.loads(E2E_PATH.read_text())) if E2E_PATH.exists() else None,
     })
 
+
+# ### What a random row split would report (demonstration)
+# The same two models, with identical settings and the same number of training rows, are validated two ways:
+# on unseen runs (this project's split) and on rows held out at random from the same pool. With a random split,
+# a validation row's neighbours 3 minutes earlier and later (and its copies in other fault types' runs) are in
+# training, so the score measures recognition of known runs rather than generalization to new ones.
+
+SPLIT_DEMO_PATH = WEB_DIR / "split_demo.json"
+SPLIT_DEMO_ROWS = 1_000_000          # training rows for every model here (both splits), to keep it quick
+
+
+def split_demo():
+    if SPLIT_DEMO_PATH.exists():
+        print("Split demonstration: reusing", SPLIT_DEMO_PATH.name)
+        return
+    t_all = time.time()
+    rng = np.random.default_rng(SEED)
+    cap = lambda n: np.sort(rng.choice(n, size=min(SPLIT_DEMO_ROWS, n), replace=False))
+    models = {"logreg": lambda task: make_lr("none", None, multiclass=task == "diagnosis"),
+              "tree": lambda task: DecisionTreeClassifier(max_depth=20, random_state=SEED)}
+    labels = {"logreg": "Logistic regression (no penalty)", "tree": "Decision tree (depth 20)"}
+    out = {"train_rows": SPLIT_DEMO_ROWS, "val_share": VAL_FRACTION, "models": labels, "detection": {}, "diagnosis": {}}
+    for task in ("detection", "diagnosis"):
+        X_tr, y_tr, X_v = task_data(task, "inst")
+        y_v = y_val if task == "detection" else faults_val[val_post]
+        # Random split: pool training and validation rows, shuffle, hold out the same share at random.
+        X_pool, y_pool = np.concatenate([X_tr, X_v]), np.concatenate([y_tr, y_v])
+        perm = rng.permutation(len(X_pool))
+        n_val = int(round(len(X_pool) * VAL_FRACTION))
+        r_val, r_tr = np.sort(perm[:n_val]), np.sort(perm[n_val:])
+        if task == "detection":
+            h = pd.util.hash_pandas_object(pd.DataFrame(X_pool), index=False).to_numpy()
+            out["identical_val_rows"] = {"random": int(np.isin(h[r_val], h[r_tr]).sum()), "random_rows": int(n_val),
+                                         "run": QUALITY["val_rows_copied_from_train"], "run_rows": int(len(val_df))}
+            del h
+        splits = {"run": (X_tr, y_tr, X_v, y_v), "random": (X_pool[r_tr], y_pool[r_tr], X_pool[r_val], y_pool[r_val])}
+        for key, build in models.items():
+            res = {}
+            for split, (A, a, B, b) in splits.items():
+                idx = cap(len(A))
+                t0 = time.time()
+                m = build(task).fit(A[idx], a[idx])
+                if task == "detection":
+                    sc = chunked(lambda Z: m.predict_proba(Z)[:, 1], B)
+                    thr = threshold_at_far(b, sc, SELECTION_FAR)
+                    res[split] = {"recall": float((sc[b == 1] >= thr).mean()), "ROC_AUC": float(roc_auc_score(b, sc)),
+                                  "val_rows": int(len(b))}
+                else:
+                    pred = chunked(m.predict, B)
+                    res[split] = {"macro_F1": float(f1_score(b, pred, average="macro")), "accuracy": float((pred == b).mean()),
+                                  "val_rows": int(len(b))}
+                res[split]["fit_seconds"] = round(time.time() - t0, 1)
+                print(f"Split demo {task} {key} {split}: {res[split]}", flush=True)
+                del m
+            out[task][key] = res
+        del X_pool, y_pool, splits
+        gc.collect()
+    out["seconds"] = round(time.time() - t_all)
+    write_json(SPLIT_DEMO_PATH, out)
+
+
+if args.split_demo == "1":
+    split_demo()
 
 export_data_summary()
 manifest_path = WEB_DIR / "manifest.json"

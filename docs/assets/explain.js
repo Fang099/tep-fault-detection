@@ -26,7 +26,7 @@ export function explainer(task, model, manifest) {
   if (fam === "logreg") {
     if (det) {
       const wx = k => [sub("w", M.n(k)), sub("x", M.n(k))];
-      return { title: "How 52 readings become one alarm", sigmoid: true, html: `
+      return { title: "How logistic regression decides", sigmoid: true, html: `
         <p>Each reading is first standardized: shifted and scaled so that, on the training runs, every variable has mean 0 and
           standard deviation 1. Logistic regression then adds the readings up with one weight each, giving a single number <i>z</i>
           (the log-odds of a fault), and squashes it into a probability between 0 and 1:</p>
@@ -38,7 +38,7 @@ export function explainer(task, model, manifest) {
         <p data-live="threshold"></p>` };
     }
     const k = M.i("k");
-    return { title: "One model, twenty scores", html: `
+    return { title: "How logistic regression decides: one score per fault", html: `
       <p>For diagnosis, logistic regression keeps a separate set of weights for every fault <i>k</i>. Each set turns the 52 readings into
         a score <i>z<sub>k</sub></i>, and the softmax function turns the 20 scores into probabilities that add up to 1. The model names the
         fault with the highest probability:</p>

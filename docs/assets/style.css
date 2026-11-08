@@ -339,3 +339,29 @@ footer { color: var(--muted); font-size: 13.5px; padding: 24px; border-top: 1px 
 table.sens-agree td.n, table.sens-agree th.n { text-align: center; min-width: 52px; }
 table.sens-agree td:first-child { white-space: nowrap; }
 @media (max-width: 640px) { table.sens-agree td:first-child .note { display: none; } }
+
+/* Correlation colour scale */
+.corr-scale { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); margin: 6px 0 0 56px; flex-wrap: wrap; }
+.corr-scale i { display: inline-block; width: 70px; height: 10px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--c-normal), var(--surface)); border: 1px solid var(--border); }
+.corr-scale i.pos { background: linear-gradient(90deg, var(--surface), var(--c-fault)); }
+@media (max-width: 640px) { .corr-scale { margin-left: 0; } .corr-scale i { width: 40px; } }
+
+/* Technical term after a plain-language heading */
+.term { font-weight: 400; color: var(--muted); font-size: 0.78em; white-space: nowrap; }
+
+/* Collapsed model bar: just the "Showing …" line */
+.modelbar.collapsed > .control, .modelbar.collapsed > .family-controls, .modelbar.collapsed .mb-full { display: none; }
+.modelbar.collapsed .current { border-top: 0; padding-top: 0; margin-top: 0; }
+
+/* Compare: current A and B in the table */
+.btn.small.on-a { border-color: var(--c-a); color: var(--c-a); font-weight: 700; box-shadow: inset 0 0 0 1px var(--c-a); }
+.btn.small.on-b { border-color: var(--c-b); color: var(--c-b); font-weight: 700; box-shadow: inset 0 0 0 1px var(--c-b); }
+
+/* Compare: tools above the all-models table */
+.table-tools { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin: 0 0 10px; }
+.table-tools .control { margin: 0; }
+
+/* 95% interval marker (range in the tooltip) */
+.ci-mark { display: inline-block; font-size: 11px; line-height: 1; color: var(--muted); border: 1px solid var(--border-strong);
+  border-radius: 99px; padding: 1px 4px; margin-left: 2px; cursor: help; vertical-align: 1px; }

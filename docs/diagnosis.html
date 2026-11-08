@@ -26,7 +26,7 @@
   <div id="modelbar"></div>
 
   <section class="section" id="overall" data-toc="Overall accuracy">
-    <h2>Overall accuracy</h2>
+    <h2>Overall accuracy <span class="term">(accuracy and macro-F1)</span></h2>
     <p class="intro">Evaluated on every validation row where a fault is active. All 20 fault types have the same number of rows,
       so always guessing one fault is right 5% of the time.</p>
     <div class="tiles" id="tiles"></div>
@@ -48,7 +48,7 @@
   </section>
 
   <section class="section" id="matrix" data-toc="What gets confused">
-    <h2>What gets confused with what</h2>
+    <h2>What gets confused with what <span class="term">(confusion matrix)</span></h2>
     <p class="intro">Each row is the true fault, each column the model's answer. Numbers are the percentage of that fault's rows,
       so a perfect model would fill only the diagonal. Click a row to see where its rows end up.</p>
     <div class="split">
@@ -58,24 +58,24 @@
   </section>
 
   <section class="section" id="perfault" data-toc="Fault by fault">
-    <h2>Fault by fault</h2>
+    <h2>Fault by fault <span class="term">(per-class recall)</span></h2>
     <p class="intro">Recall per fault: the share of each fault's rows the model names correctly. The dashed line is chance (5%).</p>
     <div class="plot"><div id="chart-recall"></div></div>
   </section>
 
   <section class="section" id="sensors" data-toc="Which sensors matter">
-    <h2>Which sensors the model relies on</h2>
+    <h2>Which sensors the model relies on <span class="term">(feature importance)</span></h2>
     <p class="intro" id="sensors-intro"></p>
     <div class="plot"><div class="plot-title" id="sensors-title"></div><div id="chart-sensors"></div></div>
   </section>
 
   <section class="section" id="window" data-toc="How much history">
-    <h2>How much history helps?</h2>
+    <h2>How much history helps? <span class="term">(rolling-window features)</span></h2>
     <p class="intro">Each line is one model, kept at its best 30-minute settings, retrained with a different amount of history:
       from a single snapshot ("none") up to 2 hours. Click a point to open that model.</p>
     <div class="plot"><div id="legend-window"></div><div id="chart-window"></div></div>
     <p class="callout" id="callout-window"></p>
-    <h3>The price: reacting later</h3>
+    <h3>The price: reacting later <span class="term">(detection delay)</span></h3>
     <div class="plot"><div id="legend-window2"></div><div id="chart-window2"></div></div>
     <p class="note" id="window-speed-note"></p>
     <details class="learn">
@@ -94,7 +94,7 @@
   </section>
 
   <section class="section" id="speed" data-toc="How quickly">
-    <h2>How quickly is the right fault named?</h2>
+    <h2>How quickly is the right fault named? <span class="term">(diagnosis delay)</span></h2>
     <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model names the correct fault
       several times in a row (3 by default; change it on the right). Faded bars mean this happened in only some runs.</p>
     <div class="split">
