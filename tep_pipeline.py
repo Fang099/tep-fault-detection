@@ -290,6 +290,20 @@ assert set(train_df["run_id"]).isdisjoint(val_df["run_id"])
 assert set(train_df["simulationRun"]).isdisjoint(val_df["simulationRun"])
 
 
+def release_memory():
+    """Collect garbage and hand freed memory back to the operating system. On Linux (e.g. Colab), memory freed after
+    parsing large CSVs otherwise stays reserved by the process, which can push a 12 GB machine over its limit."""
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass                                   # not glibc (Windows, macOS): nothing to do
+
+
+release_memory()
+
+
 def row_hashes(df):
     return pd.util.hash_pandas_object(df[FEATURES], index=False).to_numpy()
 
@@ -340,13 +354,14 @@ def window_text(w):
     return f"{m}-min" if m < 60 else f"{m // 60}-hour" if m % 60 == 0 else f"{m / 60:g}-hour"
 
 
-def history_block(df, window, chunk_rows=200_000, out_mean=None, out_std=None):
+def history_block(df, window, chunk_rows=50_000, out_mean=None, out_std=None, x=None):
     """Trailing rolling mean and std (ddof=1) of every reading over the last `window` samples of the same run,
     the current sample included. Matches pandas rolling(window, min_periods=1).mean() and
     rolling(window, min_periods=2).std().fillna(0). Computed with cumulative sums, whole runs at a time, in chunks,
     so the full dataset fits in memory. df must be sorted by run and sample (it is). Writes into out_mean/out_std
-    when given (slices of a preallocated input array), which avoids extra copies."""
-    x = df[FEATURES].to_numpy(np.float32)
+    when given (slices of a preallocated input array), which avoids extra copies; `x` can be passed the same way.
+    Chunks of 50,000 rows keep the float64 working arrays to about 250 MB (a 12 GB Colab machine needs the room)."""
+    x = x if x is not None else df[FEATURES].to_numpy(np.float32)
     run = df["run_id"].to_numpy()
     starts = np.flatnonzero(np.r_[True, run[1:] != run[:-1]])          # first row of each run
     bounds = np.r_[starts, len(run)]
@@ -376,13 +391,12 @@ def history_block(df, window, chunk_rows=200_000, out_mean=None, out_std=None):
 def raw_inputs(df, fs):
     """Unscaled inputs: the 52 readings, then (history sets) the 52 rolling means and the 52 rolling std devs.
     Always a fresh array (copy=True): the inputs are scaled in place afterwards, which must never touch df."""
-    x = df[FEATURES].to_numpy(np.float32, copy=True)
     if fs == "inst":
-        return x
+        return df[FEATURES].to_numpy(np.float32, copy=True)
     k = len(FEATURES)
     out = np.empty((len(df), 3 * k), dtype=np.float32)
-    out[:, :k] = x
-    history_block(df, window_of(fs), out_mean=out[:, k:2 * k], out_std=out[:, 2 * k:])
+    out[:, :k] = df[FEATURES].to_numpy(np.float32)        # the readings go straight into the input array
+    history_block(df, window_of(fs), out_mean=out[:, k:2 * k], out_std=out[:, 2 * k:], x=out[:, :k])
     return out
 
 
@@ -395,15 +409,23 @@ def check_ids(stage):
                              f"dtypes {d.dtypes[['faultNumber', 'simulationRun', 'run_id']].to_dict()}")
 
 
+CHUNK_ROWS_FIT = 500_000
+
+
 def build_inputs(fs):
     """Standardized training (kept rows only) and validation inputs for one input set; scaler fitted on training.
     Scaling is done in place (copy=False) so the full dataset needs one copy of each array, not three."""
     t0 = time.time()
     raw = raw_inputs(train_df, fs)
-    scalers[fs] = StandardScaler(copy=False).fit(raw)
+    release_memory()
+    # Fitted in blocks of rows: one fit on the whole array makes a temporary copy, about a quarter of its size.
+    scalers[fs] = StandardScaler(copy=False)
+    for a in range(0, len(raw), CHUNK_ROWS_FIT):
+        scalers[fs].partial_fit(raw[a:a + CHUNK_ROWS_FIT])
     X_train[fs] = scalers[fs].transform(raw if keep_rows.all() else raw[keep_rows])
     del raw
     X_val[fs] = scalers[fs].transform(raw_inputs(val_df, fs))
+    release_memory()
     print(f"Inputs '{fs}': {X_train[fs].shape[1]} columns ({time.time() - t0:.0f}s)", flush=True)
 
 
