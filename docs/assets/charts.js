@@ -325,14 +325,28 @@ export function heatmap(el, spec) {
       svgEl("rect", { x: -1, y: spec.highlightRow * cell - 1, width: w + 1, height: cell + 1, fill: "none", stroke: "var(--c-amber)", "stroke-width": 2.5, rx: 2 }, g);
     }
     const every = spec.labelEvery || 1;
+    const labelAt = spec.labelAt ? new Set(spec.labelAt) : null;     // explicit label positions (instead of every k-th)
+    const show = i => (labelAt ? labelAt.has(i) : i % every === 0);
+    // Groups of rows/columns (e.g. measured vs manipulated variables): divider lines and a title per group.
+    for (const grp of spec.groups || []) {
+      if (grp.from > 0) {
+        svgEl("line", { x1: grp.from * cell - 0.5, x2: grp.from * cell - 0.5, y1: 0, y2: h, stroke: "var(--text)", "stroke-width": 1.2, style: "pointer-events:none" }, g);
+        svgEl("line", { x1: 0, x2: w, y1: grp.from * cell - 0.5, y2: grp.from * cell - 0.5, stroke: "var(--text)", "stroke-width": 1.2, style: "pointer-events:none" }, g);
+      }
+      const mid = ((grp.from + grp.to + 1) / 2) * cell, span = (grp.to - grp.from + 1) * cell;
+      const gt = svgEl("text", { class: "axis-label", x: mid, y: h + 34, "text-anchor": "middle" }, g);
+      gt.textContent = span > 90 ? grp.label : grp.short || grp.label;
+      const gr = svgEl("text", { class: "axis-label", transform: `translate(${-42},${mid}) rotate(-90)`, "text-anchor": "middle" }, g);
+      gr.textContent = span > 90 ? grp.label : grp.short || grp.label;
+    }
     spec.rowLabels.forEach((lbl, r) => {
-      if (r % every !== 0 && r !== spec.highlightRow) return;
+      if (!show(r) && r !== spec.highlightRow) return;
       const t = svgEl("text", { x: -6, y: r * cell + cell / 2 + 4, "text-anchor": "end",
                                 style: r === spec.highlightRow ? "fill:var(--text);font-weight:700" : null }, g);
       t.textContent = lbl;
     });
     spec.colLabels.forEach((lbl, c) => {
-      if (c % every !== 0) return;
+      if (!show(c)) return;
       const t = svgEl("text", { x: c * cell + cell / 2, y: h + 14, "text-anchor": "middle" }, g);
       t.textContent = lbl;
     });

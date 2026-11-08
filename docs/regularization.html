@@ -25,7 +25,7 @@
   <p class="data-note" id="data-note"></p>
 
   <section class="section" id="performance" data-toc="Does it help?">
-    <h2>Does regularization help?</h2>
+    <h2>Does regularization help? <span class="term">(L1 and L2 penalties)</span></h2>
     <p class="intro">Validation performance of every logistic-regression variant against C. The horizontal lines are the models without a penalty.
       Click any point to open that model in its explorer.</p>
     <div class="control"><div class="seg" id="task"><button type="button" data-v="detection" class="on">Detection: faults caught at 5% false alarms</button><button type="button" data-v="diagnosis">Diagnosis: macro-F1</button></div></div>
@@ -36,6 +36,27 @@
         <div id="chart-nonzero"></div></div>
     </div>
     <p class="callout" id="callout-perf"></p>
+    <details class="learn">
+      <summary><span class="learn-tag">Learn</span>Why regularization barely helps here</summary>
+      <div class="learn-body">
+        <p><b>What it is for.</b> A penalty pulls the weights towards zero. That makes the model a little less able to fit the training
+          data (more <i>bias</i>) in exchange for weights that depend less on which rows happened to be in training (less <i>variance</i>).
+          The trade pays off when a model has many weights for the amount of data, so that it starts fitting noise: overfitting.</p>
+        <p><b>Why there is little to gain here.</b> Logistic regression has 52 weights (156 with history; one set per fault for
+          diagnosis), and it trains on about 4 million rows. Even counting whole runs rather than rows, since rows of one run are
+          strongly correlated, that is 8,400 training runs. With that much data the unpenalized weights are already pinned down
+          precisely: there is almost no variance left for a penalty to remove, and the learning curve on the Results page shows the
+          same thing for the best models, where even 5% of the runs gets within a few points of all of them.</p>
+        <p><b>What limits it instead is bias.</b> A logistic regression can only draw one straight boundary through the readings (a
+          weighted sum). Many faults show up as a change in how much a sensor fluctuates, or in a combination of sensors, which a
+          straight boundary can't follow. A penalty makes the model <i>simpler</i>, which is the opposite of what it needs; that is why
+          the tree models, which can bend the boundary, do much better.</p>
+        <p><b>Where regularization still earns its place.</b> It would matter with far fewer runs. Even here it helps reading the
+          model: the sensors are strongly correlated (<a href="index.html#explore">see the correlation map</a>), so unpenalized
+          coefficients can trade off against each other, while ridge keeps them stable and lasso shows how few sensors are enough
+          (the coefficient paths below). Strong lasso does hurt: once it removes sensors the model needs, performance drops.</p>
+      </div>
+    </details>
     <details class="learn">
       <summary><span class="learn-tag">Learn</span>What C actually changes</summary>
       <div class="learn-body">
@@ -51,7 +72,7 @@
   </section>
 
   <section class="section" id="paths" data-toc="Which sensors survive">
-    <h2>Which sensors survive: coefficient paths</h2>
+    <h2>Which sensors survive: coefficient paths <span class="term">(lasso path)</span></h2>
     <p class="intro">Each line is one of the 52 process variables: its coefficient (on standardized inputs) as C changes.
       Under lasso, lines hit zero and stay there as C shrinks; under ridge they shrink smoothly. Move the C slider to see the ranking at that strength.</p>
     <div class="split">

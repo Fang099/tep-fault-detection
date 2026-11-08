@@ -7,7 +7,9 @@ import { barChart, lineChart, legend } from "../charts.js";
 
 renderChrome();
 
-const state = { manifest: null, task: "detection", a: null, b: null, sort: null, token: 0, far: OFFICIAL_FAR, rocZoom: false, files: null, all: null };
+const state = { manifest: null, task: "detection", a: null, b: null, sort: null, token: 0, far: OFFICIAL_FAR, rocZoom: false, files: null, all: null,
+                tableFamily: "all", showAll: false };
+const TABLE_ROWS = 25;      // rows shown before "Show all"
 const $ = id => document.getElementById(id);
 const A = COLORS.a, B = COLORS.b;
 
@@ -295,8 +297,7 @@ function renderTable() {
   const cols = [
     ["Model", m => m.label, "s"],
     ["Family", m => familyLabel(state.manifest, familyOf(m)), "s"],
-    ["Settings", m => settingsText(m), "s"],
-    ["Sensors used", m => m.coef_nonzero, "n", v => (v == null ? "–" : v)],
+    ["Inputs used", m => m.coef_nonzero, "n", v => (v == null ? "–" : v)],
     ...(det ? [
       // The baseline (one score for every row) cannot raise any alarm within the budget, so it catches 0%.
       [`Caught @${farText()} FA`, m => atFar(m).recall, "n", pct],
@@ -307,24 +308,39 @@ function renderTable() {
       ["Accuracy", m => m.val.accuracy, "n", pct],
     ]),
   ];
-  const key = det ? 4 : 4;
+  const key = 3;
   if (!state.sort) state.sort = { col: key, desc: true };
   const { col, desc } = state.sort;
-  const models = [...state.manifest[state.task].models].sort((x, y) => {
+  // Family filter (options rebuilt when the task changes).
+  const famSel = $("table-family"), fams = [...new Set(state.manifest[state.task].models.map(familyOf))];
+  const famOpts = `<option value="all">All families</option>${fams.map(f => `<option value="${f}">${esc(familyLabel(state.manifest, f))}</option>`).join("")}`;
+  if (famSel.dataset.task !== state.task) { famSel.innerHTML = famOpts; famSel.dataset.task = state.task; state.tableFamily = "all"; }
+  famSel.value = state.tableFamily;
+  famSel.onchange = () => { state.tableFamily = famSel.value; state.showAll = false; renderTable(); };
+  const sorted = [...state.manifest[state.task].models].filter(m => state.tableFamily === "all" || familyOf(m) === state.tableFamily).sort((x, y) => {
     let a = cols[col][1](x), b = cols[col][1](y);
     if (a == null) return 1; if (b == null) return -1;
     const r = typeof a === "string" ? a.localeCompare(b) : a - b;
     return desc ? -r : r;
   });
+  // Show the top rows, plus A and B wherever they rank, until "Show all".
+  const models = state.showAll ? sorted : sorted.filter((m, i) => i < TABLE_ROWS || m.id === state.a || m.id === state.b);
+  const more = $("table-more");
+  more.hidden = sorted.length <= TABLE_ROWS;
+  more.textContent = state.showAll ? "Show top " + TABLE_ROWS : `Show all ${sorted.length} models`;
+  more.onclick = () => { state.showAll = !state.showAll; renderTable(); };
+  $("table-count").textContent = `${models.length} of ${sorted.length} shown`;
   const best = state.manifest[state.task].best;
   const page = det ? "detection.html" : "diagnosis.html";
   $("all-table").innerHTML = `<thead><tr>${cols.map(([name, , type], i) =>
       `<th class="sortable ${type === "n" ? "n" : ""}" data-col="${i}">${name}${i === col ? (desc ? " ▾" : " ▴") : ""}</th>`).join("")}<th></th></tr></thead>
     <tbody>${models.map(m => `<tr class="${m.id === best ? "highlight" : ""}">${cols.map(([, get, type, fmt]) => {
       const v = get(m);
-      return `<td class="${type === "n" ? "n" : ""}">${fmt ? fmt(v) : esc(v)}${type === "s" && get === cols[0][1] && m.id === best ? ' <span class="badge best">best</span>' : ""}</td>`;
-    }).join("")}<td style="white-space:nowrap"><button class="btn small" type="button" data-a="${m.id}" aria-label="Set as model A">A</button>
-      <button class="btn small" type="button" data-b="${m.id}" aria-label="Set as model B">B</button>
+      return `<td class="${type === "n" ? "n" : ""}">${fmt ? fmt(v) : esc(v)}${type === "s" && get === cols[0][1] && m.id === best ? ' <span class="badge best">best</span>' : ""}${
+        type === "s" && get === cols[0][1] && (m.selectable === false || (state.manifest.settings.subset_families || []).includes(familyOf(m)))
+          ? ` <span class="badge" title="${m.selectable === false ? "Windows longer than 1 hour look better on validation than they are (see the Detection page), so they are never picked as best" : "Trained on a small subset of the rows only"}">not eligible for best</span>` : ""}</td>`;
+    }).join("")}<td style="white-space:nowrap"><button class="btn small ${m.id === state.a ? "on-a" : ""}" type="button" data-a="${m.id}" aria-pressed="${m.id === state.a}" aria-label="Set as model A">A</button>
+      <button class="btn small ${m.id === state.b ? "on-b" : ""}" type="button" data-b="${m.id}" aria-pressed="${m.id === state.b}" aria-label="Set as model B">B</button>
       <a href="${modelLink(page, m)}" style="font-size:13px;margin-left:4px">open</a></td></tr>`).join("")}</tbody>`;
   $("all-table").onclick = e => {
     const th = e.target.closest("th[data-col]");
@@ -335,7 +351,8 @@ function renderTable() {
       return;
     }
     const b = e.target.closest("button");
-    if (b?.dataset.a) { state.a = b.dataset.a; update(); window.scrollTo({ top: 0, behavior: "smooth" }); }
-    if (b?.dataset.b) { state.b = b.dataset.b; update(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+    // Stay in place: the page above updates, and the A/B buttons show the current pair.
+    if (b?.dataset.a) { state.a = b.dataset.a; update(); }
+    if (b?.dataset.b) { state.b = b.dataset.b; update(); }
   };
 }

@@ -26,7 +26,7 @@
   <div id="modelbar"></div>
 
   <section class="section" id="threshold" data-toc="Alarm threshold">
-    <h2>The alarm threshold</h2>
+    <h2>The alarm threshold <span class="term">(decision threshold)</span></h2>
     <p class="intro">Rows above the threshold raise an alarm. Lowering it catches more faults but also raises more false alarms
       on normal operation. Every model on this site is compared at the threshold that gives 5% false alarms on validation data.</p>
     <div class="split">
@@ -78,7 +78,7 @@
   </section>
 
   <section class="section" id="scores" data-toc="Why errors happen">
-    <h2>Why errors happen: overlapping scores</h2>
+    <h2>Why errors happen: overlapping scores <span class="term">(class-conditional score distributions)</span></h2>
     <p class="intro">How the model's scores are distributed for normal rows and for faulty rows. Wherever the two overlap, no threshold
       can separate them: anything left of the line is called normal, anything right of it raises an alarm.
       Click a fault in the fault-by-fault chart to add its rows here.</p>
@@ -121,7 +121,7 @@
 
 
   <section class="section" id="cost" data-toc="Threshold by cost">
-    <h2>Choosing the threshold by cost</h2>
+    <h2>Choosing the threshold by cost <span class="term">(cost-sensitive thresholding)</span></h2>
     <p class="intro">A false alarm costs an operator's time and trust; a missed fault can damage equipment, spoil product or create a
       safety risk. If you can say how much worse a miss is than a false alarm, the threshold that minimizes the expected cost follows.</p>
     <div class="split">
@@ -158,7 +158,7 @@
   </section>
 
   <section class="section" id="faults" data-toc="Fault by fault">
-    <h2>Fault by fault</h2>
+    <h2>Fault by fault <span class="term">(recall per fault)</span></h2>
     <p class="intro">Share of each fault's rows caught at the current threshold. Some faults barely change the measurements and are
       nearly impossible to see in a single snapshot. Click a fault for details.</p>
     <div class="split">
@@ -169,7 +169,7 @@
 
 
   <section class="section" id="run" data-toc="Follow a single run">
-    <h2>Follow a single run</h2>
+    <h2>Follow a single run <span class="term">(score time series)</span></h2>
     <p class="intro">Pick a fault and watch the model's score, sample by sample, on one validation run of 25 hours. So that every model
       shares one scale, each score is shown by how unusual it is for normal operation: "1 in 20" means only 1 in 20 normal samples score
       that high. Dots above the threshold line are alarms; the threshold follows the slider at the top of the page.</p>
@@ -180,7 +180,7 @@
   </section>
 
   <section class="section" id="sensors" data-toc="Which sensors matter">
-    <h2>Which sensors the model relies on</h2>
+    <h2>Which sensors the model relies on <span class="term">(feature importance)</span></h2>
     <p class="intro" id="sensors-intro"></p>
     <div class="plot"><div class="plot-title" id="sensors-title"></div><div id="chart-sensors"></div></div>
     <details class="learn">
@@ -200,12 +200,12 @@
 
 
   <section class="section" id="window" data-toc="How much history">
-    <h2>How much history helps?</h2>
+    <h2>How much history helps? <span class="term">(rolling-window features)</span></h2>
     <p class="intro">Each line is one model, kept at its best 30-minute settings, retrained with a different amount of history:
       from a single snapshot ("none") up to 2 hours. Click a point to open that model.</p>
     <div class="plot"><div id="legend-window"></div><div id="chart-window"></div></div>
     <p class="callout" id="callout-window"></p>
-    <h3>The price: reacting later</h3>
+    <h3>The price: reacting later <span class="term">(detection delay)</span></h3>
     <div class="plot"><div id="legend-window2"></div><div id="chart-window2"></div></div>
     <p class="note" id="window-speed-note"></p>
     <details class="learn">
@@ -224,7 +224,7 @@
   </section>
 
   <section class="section" id="calibration" data-toc="Trusting the scores">
-    <h2>Can the scores be read as probabilities?</h2>
+    <h2>Can the scores be read as probabilities? <span class="term">(calibration)</span></h2>
     <p class="intro">A model is calibrated if its scores mean what they say: of all the samples it scores around 0.8, about 80% really are
       faulty. Each dot groups the validation samples with similar scores; on the diagonal, the score matches the true share of faults.</p>
     <div class="split">
@@ -249,7 +249,7 @@
   </section>
 
   <section class="section" id="speed" data-toc="How quickly">
-    <h2>How quickly is a fault detected?</h2>
+    <h2>How quickly is a fault detected? <span class="term">(detection delay)</span></h2>
     <p class="intro">For each faulty validation run: minutes from the moment the fault starts until the model raises
       several alarms in a row (3 by default; change it on the right). Bars show the median over runs; faded bars mean the fault was detected in only some runs.
       These were computed in advance at fixed false alarm rates, so they don't follow the threshold slider.</p>

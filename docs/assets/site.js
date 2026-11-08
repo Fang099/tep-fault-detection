@@ -96,7 +96,8 @@ export function getJSON(path) {
 }
 // Manifests written before tree models existed have no family information; fill it in so every page can rely on it.
 const FAMILY_LABELS = { baseline: "Majority baseline", logreg: "Logistic regression", pcalr: "PCA + logistic regression",
-  pcamon: "PCA monitoring (T² / SPE)", tree: "Decision tree", rf: "Random forest", gb: "Gradient boosting", ada: "AdaBoost", xgb: "XGBoost" };
+  pcamon: "PCA monitoring (T² / SPE)", tree: "Decision tree", rf: "Random forest", gb: "Gradient boosting", ada: "AdaBoost", xgb: "XGBoost",
+  svm: "RBF support vector machine" };
 function normalizeManifest(m) {
   for (const task of ["detection", "diagnosis"]) {
     for (const s of m[task].models) {
@@ -345,20 +346,30 @@ export function modelBar(container, opts) {
     <div class="family-controls" data-k="controls"></div>
     <div class="current"><span class="note">Showing</span> <b data-k="label"></b> <span data-k="badges"></span>
       <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" type="button" data-k="best-family">Best of this model</button>
-        <button class="btn" type="button" data-k="best">Best overall</button></span></div>`;
+        <button class="btn mb-full" type="button" data-k="best-family">Best of this model</button>
+        <button class="btn mb-full" type="button" data-k="best">Best overall</button>
+        <button class="btn" type="button" data-k="collapse" aria-expanded="true"></button></span></div>`;
   const q = k => container.querySelector(`[data-k="${k}"]`);
   const controls = q("controls");
+  // Collapse the bar to one line ("Showing …") so it takes less room while reading; remembered per browser.
+  const setCollapsed = c => {
+    container.classList.toggle("collapsed", c);
+    q("collapse").textContent = c ? "Change model ▾" : "Hide ▴";
+    q("collapse").setAttribute("aria-expanded", String(!c));
+    try { localStorage.setItem("tep-modelbar-collapsed", c ? "1" : "0"); } catch (e) { /* storage unavailable */ }
+  };
+  let startCollapsed = false;
+  try { startCollapsed = localStorage.getItem("tep-modelbar-collapsed") === "1"; } catch (e) { /* storage unavailable */ }
+  setCollapsed(startCollapsed);
 
   function renderControls() {
     const fam = sel.family;
     const wins = fam !== "baseline" ? windowsFor(fam) : [];
-    const inputs = fam !== "baseline" && hasHistory(fam) ? `<div class="control"><div class="control-head">Inputs</div>
-      <div class="seg" data-k="features"><button type="button" data-v="inst">Instantaneous</button><button type="button" data-v="hist">+ history</button></div></div>
-      ${wins.length > 1 ? `<div class="control grow" data-k="window-wrap"><div class="control-head"><span>History window
-        <span class="note" data-k="window-note"></span></span><span class="val" data-k="wval"></span></div>
-        <input type="range" min="0" max="${wins.length - 1}" step="1" data-k="window" aria-label="History window">
-        <div class="ticks">${wins.map(w => `<span>${windowShort(w)}</span>`).join("")}</div></div>` : ""}` : "";
+    // One slider for the inputs: "none" = the 52 current readings only, then each trained history window.
+    const inputs = fam !== "baseline" && hasHistory(fam) ? `<div class="control grow" data-k="window-wrap"><div class="control-head"><span>History window</span><span class="val" data-k="wval"></span></div>
+        <input type="range" min="0" max="${wins.length}" step="1" data-k="window" aria-label="History window">
+        <div class="ticks"><span>none</span>${wins.map(w => `<span>${windowShort(w)}</span>`).join("")}</div>
+        <div class="note" data-k="window-note" style="font-size:12px;margin-top:2px"></div></div>` : "";
     renderFamilyControls(fam);
     controls.insertAdjacentHTML("afterbegin", inputs);
   }
@@ -387,21 +398,12 @@ export function modelBar(container, opts) {
   function sync() {
     const model = findModel(manifest, task, sel);
     q("family").value = sel.family;
-    // Inputs switch: disable an option when no model with these settings was trained on it.
-    const cur = isHist(sel.features) ? "hist" : "inst";
-    q("features")?.querySelectorAll("button").forEach(b => {
-      b.classList.toggle("on", b.dataset.v === cur);
-      b.setAttribute("aria-pressed", b.dataset.v === cur);
-      b.disabled = b.dataset.v !== cur && !findModel(manifest, task, { ...sel, features: b.dataset.v });
-      b.title = b.disabled ? "Not trained with these settings" : "";
-    });
     const ww = q("window-wrap");
     if (ww) {
-      const wins = windowsFor(sel.family), w = windowOf(sel.features);
-      ww.hidden = !isHist(sel.features);
-      q("window").value = Math.max(0, wins.indexOf(w));
-      q("wval").textContent = isHist(sel.features) ? windowShort(w) : "";
-      q("window-note").textContent = w === 10 ? "" : "(other windows: best 30-min settings only)";
+      const wins = windowsFor(sel.family), w = windowOf(sel.features), hist = isHist(sel.features);
+      q("window").value = hist ? Math.max(0, wins.indexOf(w)) + 1 : 0;
+      q("wval").textContent = hist ? windowShort(w) : "none (current readings only)";
+      q("window-note").textContent = wins.length > 1 ? "Windows other than 30 min: trained for the best settings only" : "";
     }
     if (sel.family === "logreg") {
       for (const k of ["weighting", "penalty"]) {
@@ -451,6 +453,7 @@ export function modelBar(container, opts) {
   container.addEventListener("click", e => {
     const b = e.target.closest("button");
     if (!b) return;
+    if (b.dataset.k === "collapse") { setCollapsed(!container.classList.contains("collapsed")); return; }
     if (b.dataset.k === "best" || b.dataset.k === "best-family") {
       const m = b.dataset.k === "best" ? bestModel(manifest, task) : bestModel(manifest, task, sel.family);
       const famChanged = familyOf(m) !== sel.family;
@@ -469,7 +472,7 @@ export function modelBar(container, opts) {
     const t = e.target;
     if (t.dataset.k === "C") { sel.C = grid[+t.value]; changed(); }
     else if (t.dataset.k === "window") {
-      const w = windowsFor(sel.family)[+t.value], fs = fsForWindow(w);
+      const w = +t.value === 0 ? null : windowsFor(sel.family)[+t.value - 1], fs = w == null ? "inst" : fsForWindow(w);
       if (findModel(manifest, task, { ...sel, features: fs })) sel = { ...sel, features: fs };
       else {
         // Jump to the settings that were trained with this window.

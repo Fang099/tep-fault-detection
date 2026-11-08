@@ -409,24 +409,39 @@ function renderScores() {
   }
   legend($("legend-scores"), items);
 
-  const lo = stat ? scoreX(v.edges[0]) : Math.max(-12, logit(v.edges[0]));
-  const hi = stat ? scoreX(v.edges[v.B]) : Math.min(12, logit(v.edges[v.B]));
-  const ticks = stat ? logTicks(lo, hi) : PROB_TICKS.filter(p => logit(p) >= lo && logit(p) <= hi);
+  const margin = state.model.score_kind === "margin";      // SVM: logistic of the distance from the boundary
+  // The axis reaches as far as the scores do (the logit is capped at ±16.1, i.e. 1 in 10 million), so rows the model
+  // is certain about are drawn instead of falling off the edge.
+  const lo = stat ? scoreX(v.edges[0]) : Math.max(-16.2, logit(v.edges[0]));
+  const hi = stat ? scoreX(v.edges[v.B]) : Math.min(16.2, logit(v.edges[v.B]));
+  const probTicks = [1e-6, 1e-5, 0.0001, 0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999, 0.9999, 0.99999, 0.999999]
+    .filter((t, i) => el.clientWidth >= 640 || [0, 2, 4, 6, 8, 10, 12].includes(i));
+  const dStep = margin ? [0.25, 0.5, 1, 2, 5].find(s => (hi - lo) / s <= 8) || 10 : 1;
+  const ticks = stat ? logTicks(lo, hi)
+    : margin ? Array.from({ length: Math.floor(hi / dStep) - Math.ceil(lo / dStep) + 1 }, (_, i) => 1 / (1 + Math.exp(-(Math.ceil(lo / dStep) + i) * dStep)))
+    : probTicks.filter(p => logit(p) >= lo && logit(p) <= hi);
   const ys = series.flatMap(s => s.points.map(p => p[1])).sort((a, b) => a - b);
   const yMax = ys[Math.floor(ys.length * 0.995)] * 1.1 || 1;
   const r = v.at(state.t);
   lineChart(el, {
     height: 290,
-    x: { domain: [lo, hi], ticks: ticks.map(scoreX), fmt: x => { const t = ticks[ticks.map(scoreX).indexOf(x)]; return stat ? (t >= 10000 ? t.toExponential(0) : String(+t.toPrecision(3))) : String(t); },
-         label: stat ? `${state.model.params.stat === "T2" ? "Hotelling T²" : "SPE"} (log scale)` : "Model's fault score (probability, spaced by log-odds)" },
+    x: { domain: [lo, hi], ticks: ticks.map(scoreX), fmt: x => { const t = ticks[ticks.map(scoreX).indexOf(x)]; return stat ? (t >= 10000 ? t.toExponential(0) : String(+t.toPrecision(3))) : margin ? String(+logit(t).toFixed(2)) : String(t); },
+         label: stat ? `${state.model.params.stat === "T2" ? "Hotelling T²" : "SPE"} (log scale)` : margin ? "SVM score: signed distance from the boundary" : "Model's fault score (probability, spaced by log-odds)" },
     y: { domain: [0, yMax], fmt: y => y.toFixed(2), label: "Density" },
     series,
     vlines: r.threshold == null ? [] : [{ x: scoreX(r.threshold), color: COLORS.amber, label: "threshold", width: 2 }],
   });
 
+  // Rows the model is (almost) certain about: score of 0.9999 or more.
+  const sure = (counts, total) => total ? counts.reduce((a, c, k) => a + (v.edges[k] >= 0.9999 ? c : 0), 0) / total : 0;
+  const sureF = stat || margin ? 0 : sure(faultCounts, v.totalF), sureN = stat || margin ? 0 : sure(v.normal, v.totalN);
   $("callout-scores").innerHTML = `<b>The overlap is the problem.</b> Normal rows to the right of the line are false alarms
     (${pct(r.far)} of normal rows); faulty rows to the left are missed (${pct(1 - r.recall)} of faulty rows).
-    Many faulty rows score just like normal ones, because a single snapshot of a slowly developing fault can look normal.`;
+    Many faulty rows score just like normal ones, because a single snapshot of a slowly developing fault can look normal.
+    ${sureF >= 0.05 ? `<br><b>The peak at the far right is real:</b> ${pct(sureF)} of faulty rows score 0.9999 or more (against ${pct(sureN, 2)}
+      of normal rows). These are rows of faults that change the plant unmistakably, which the model is certain about. Because the axis
+      is spaced by log-odds, 0.99, 0.9999 and 0.999999 are equally far apart, so that certainty gets room of its own; rows in between
+      are rarer, since a row tends to be either clearly faulty or ambiguous.` : ""}`;
 }
 
 // ---------- ROC ----------
@@ -674,6 +689,7 @@ function renderCalibration() {
   const clear = msg => { el.innerHTML = `<div class="empty">${msg}</div>`; $("legend-calib").innerHTML = ""; $("tiles-calib").innerHTML = ""; $("calib-note").textContent = ""; $("callout-calib").innerHTML = ""; };
   if (isBaseline()) return clear("The baseline gives every sample the same score, so there is nothing to calibrate.");
   if (state.model.score_kind === "stat") return clear("T² and SPE are distances, not probabilities, so calibration doesn't apply.");
+  if (state.model.score_kind === "margin") return clear("An SVM's score is a distance from its boundary, not a probability, so calibration doesn't apply.");
   if (!cal) return clear("Calibration data isn't in these results yet. It is exported by the latest version of the pipeline.");
   const pts = cal.bins.map(([p, f, n]) => [p, f, n]);
   legend($("legend-calib"), [{ label: "This model", color: COLORS.data }, { label: "Perfect calibration", color: COLORS.faint, dash: true }]);

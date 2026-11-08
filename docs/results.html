@@ -22,12 +22,19 @@
 <aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
   <section class="section" id="test" data-toc="Final test">
-    <h2>Final test</h2>
+    <h2>Final test <span class="term">(held-out test set)</span></h2>
     <div id="test-body"></div>
   </section>
 
+  <section class="section" id="findings" data-toc="Findings">
+    <h2>Findings</h2>
+    <p class="data-note" id="data-note"></p>
+    <ul class="tight" id="findings-list"></ul>
+    <div id="findings-more"></div>
+  </section>
+
   <section class="section" id="families" data-toc="Best of each model">
-    <h2>The best of each model</h2>
+    <h2>The best of each model <span class="term">(model selection)</span></h2>
     <p class="intro">For every model family, the settings that scored best on validation. Click a model to open it in its explorer.
       Change the false alarm rate to see whether the ranking depends on it; the official choice stays at 5%.</p>
     <div class="control" style="margin-bottom:6px"><div class="control-head">Detection false alarm rate (★ = official)</div><div id="fam-far"></div></div>
@@ -36,8 +43,18 @@
     <div class="table-wrap" style="margin-top:14px"><table id="families-table"></table></div>
   </section>
 
+  <section class="section" id="sensors" data-toc="Which sensors matter">
+    <h2>Which sensors matter? <span class="term">(feature importance)</span></h2>
+    <p class="intro">Which of the 52 sensors the best models lean on, whether different kinds of model agree, and whether it is a
+      sensor's current reading or its recent behaviour that counts. Each history sensor feeds three inputs (its current reading,
+      its rolling mean and its rolling standard deviation); here they are added up per sensor.</p>
+    <div class="control" style="margin-bottom:10px"><div class="control-head">Task</div><div class="seg" id="sens-task">
+      <button type="button" data-v="detection" class="on">Detection</button><button type="button" data-v="diagnosis">Diagnosis</button></div></div>
+    <div id="sens-body"></div>
+  </section>
+
   <section class="section" id="e2e" data-toc="The whole system">
-    <h2>The whole system: detection and diagnosis together</h2>
+    <h2>The whole system: detection and diagnosis together <span class="term">(end-to-end evaluation)</span></h2>
     <p class="intro">Every row gets one of 21 answers: "no fault" or the fault number. Two ways to get there, both held to
       5% false alarms on validation:</p>
     <ul class="tight">
@@ -51,24 +68,19 @@
   </section>
 
   <section class="section" id="data" data-toc="How much data">
-    <h2>How much training data is enough?</h2>
+    <h2>How much training data is enough? <span class="term">(learning curve)</span></h2>
     <p class="intro">The best detection and diagnosis models, retrained with the same settings on less data, then scored on the same
       validation runs. Two different kinds of "less": fewer simulation runs (each run is a new random disturbance pattern) and sparser
       sampling inside the same runs (neighbouring samples are only 3 minutes apart).</p>
     <div id="data-body"></div>
   </section>
 
-  <section class="section" id="findings" data-toc="Findings">
-    <h2>Findings from validation</h2>
-    <p class="data-note" id="data-note"></p>
-    <ul class="tight" id="findings-list"></ul>
-  </section>
 
   <section class="section" id="limits" data-toc="Limitations">
     <h2>Limitations</h2>
     <ul class="tight">
-      <li><b>Short memory.</b> Most models see the 52 variables at a single moment; the history versions add only the last 30 minutes as
-        rolling means and standard deviations. Faults that drift over hours, or change the plant's dynamics in subtler ways, remain hard to see.</li>
+      <li><b>Short memory.</b> Most models see the 52 variables at a single moment; the history versions add at most the last
+        hour as rolling means and standard deviations (2 hours in the window sweep, which is shown but not used to pick models). Faults that drift over hours, or change the plant's dynamics in subtler ways, remain hard to see.</li>
       <li><b>Some faults are invisible to these variables.</b> Faults 3, 9 and 15 are widely reported as nearly undetectable in the TEP
         literature, because they barely change the statistics of the measured data. Low scores on them are expected.</li>
       <li><b>Detection delays can include chance alarms.</b> At a 5% false-alarm rate, three alarms in a row eventually happen on normal

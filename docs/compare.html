@@ -51,13 +51,13 @@
   </section>
 
   <section class="section" id="faults" data-toc="Fault by fault">
-    <h2>Fault by fault</h2>
+    <h2>Fault by fault <span class="term">(recall per fault)</span></h2>
     <p class="intro" id="faults-intro"></p>
     <div class="plot"><div id="legend-faults"></div><div id="chart-faults"></div></div>
   </section>
 
   <section class="section" id="roc" data-toc="Every false alarm rate">
-    <h2>At every false alarm rate</h2>
+    <h2>At every false alarm rate <span class="term">(recall vs false alarm rate)</span></h2>
     <p class="intro">Each curve traces one model as its threshold slides from strict to loose: further up and to the left is better.
       The dots mark each model at the chosen rate; click on a curve to jump to the nearest listed rate.</p>
     <div class="control" style="margin-bottom:10px"><div class="seg" id="roc-zoom"><button type="button" data-v="full" class="on">Whole curve</button><button type="button" data-v="zoom">Zoom to 0–20% false alarms</button></div></div>
@@ -66,7 +66,7 @@
   </section>
 
   <section class="section" id="speed" data-toc="How quickly">
-    <h2>How quickly</h2>
+    <h2>How quickly <span class="term">(detection delay)</span></h2>
     <p class="intro" id="speed-intro"></p>
     <div class="control" id="speed-k-wrap" style="margin-bottom:10px"><div class="control-head">In a row needed</div><div class="seg" id="speed-k"></div></div>
     <div class="plot"><div id="legend-speed"></div><div id="chart-speed"></div></div>
@@ -75,7 +75,12 @@
   <section class="section" id="table" data-toc="Every model">
     <h2>Every model</h2>
     <p class="intro" id="table-intro"></p>
+    <div class="table-tools">
+      <div class="control"><div class="control-head"><label for="table-family">Family</label></div><select id="table-family"></select></div>
+      <span class="note" id="table-count"></span>
+    </div>
     <div class="table-wrap"><table id="all-table"></table></div>
+    <div style="margin-top:10px"><button class="btn" type="button" id="table-more" hidden></button></div>
   </section>
 </main>
 </div>

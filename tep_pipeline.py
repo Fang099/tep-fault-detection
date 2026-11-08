@@ -27,6 +27,9 @@ Model families (--families picks which to train; the majority baseline is always
   gb      Gradient boosting (scikit-learn's histogram version): tree depth x boosting rounds.
   ada     AdaBoost with small decision trees: tree depth x boosting rounds.
   xgb     XGBoost: tree depth x boosting rounds (skipped if xgboost is not installed).
+  svm     RBF-kernel support vector machine on a small random subset of the training rows (--svm-rows), with margin
+          softness C. Exact kernel SVMs scale with the square of the training rows, so they can't use all the data;
+          they are shown for comparison but never picked as the overall best model.
 Forests and boosted models are trained once per depth at the largest size; smaller forests (the first k trees)
 and fewer boosting rounds (the first k rounds) are evaluated from that same fit, so the website can show every
 size without retraining.
@@ -74,6 +77,7 @@ from sklearn.metrics import (average_precision_score, confusion_matrix, f1_score
                              precision_score, recall_score, roc_auc_score)
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
 try:
@@ -85,8 +89,9 @@ pd.set_option("display.width", 220)
 pd.set_option("display.max_columns", 30)
 pd.set_option("display.max_rows", 200)
 
-ALL_FAMILIES = ["logreg", "pcalr", "pcamon", "tree", "rf", "gb", "ada", "xgb"]
-HISTORY_CAPABLE = ["logreg", "pcamon", "tree", "rf", "gb", "ada", "xgb"]
+ALL_FAMILIES = ["logreg", "pcalr", "pcamon", "tree", "rf", "gb", "ada", "xgb", "svm"]
+HISTORY_CAPABLE = ["logreg", "pcamon", "tree", "rf", "gb", "ada", "xgb", "svm"]
+SUBSET_FAMILIES = ["svm"]   # trained on a small subset only: shown for comparison, never chosen as the overall best
 
 # ---- Command-line settings -----------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="TEP fault detection and diagnosis pipeline")
@@ -115,6 +120,12 @@ parser.add_argument("--end-to-end", default="1",
                     help="1 = evaluate detection + diagnosis together (two-stage chain and one 21-label model); 0 = skip")
 parser.add_argument("--hist-windows", default="2,5,20,40",
                     help="extra history windows (in 3-minute samples) for the window sweep; '' to skip it")
+parser.add_argument("--svm-rows", default="5000,20000",
+                    help="training-subset sizes for the RBF SVM (random rows, nested); its cost grows with the square of this")
+parser.add_argument("--svm-c", default="1,10", help="values of C (margin softness) for the RBF SVM")
+parser.add_argument("--split-demo", default="0",
+                    help="1 = also measure what a random row split would report (logistic regression and a deep tree, "
+                         "trained both ways on the same number of rows); written to split_demo.json")
 parser.add_argument("--final-test", action="store_true", help="retrain the chosen models and evaluate on test")
 parser.add_argument("--force-retrain", action="store_true",
                     help="retrain the families listed in --families even if already exported (others are kept as they are)")
@@ -174,6 +185,9 @@ LEARNING_RATE = 0.1       # gradient boosting and XGBoost
 # diverge at depth 6-8 (a leaf whose rows already had near-zero probability for a fault got a near-zero curvature
 # term, so its update for that fault exploded). XGBoost's default is 1, so this matches it.
 GB_L2 = 1.0
+SVM_ROWS = [int(v) for v in args.svm_rows.split(",") if v.strip()]
+SVM_C = [float(v) for v in args.svm_c.split(",") if v.strip()]
+SVM_C = [int(c) if c == int(c) else c for c in SVM_C]   # 1, 10 rather than 1.0, 10.0 in ids and labels
 
 # ---- PCA, history, uncertainty ---------------------------------------------------------------------
 PCA_COMPONENTS = [2, 5, 10, 15, 20, 30, 40]       # PCA + logistic regression
@@ -266,13 +280,28 @@ print(train_all["target"].value_counts().rename("rows"))
 # simulation stay on the same side. Each fault type still keeps 80% of its runs for training.
 
 sim_numbers = np.sort(train_all["simulationRun"].unique())
-_, val_sims = train_test_split(sim_numbers, test_size=0.2, random_state=SEED)
+VAL_FRACTION = 0.2                       # share of simulation numbers held out for validation
+_, val_sims = train_test_split(sim_numbers, test_size=VAL_FRACTION, random_state=SEED)
 is_val = train_all["simulationRun"].isin(val_sims)
 train_df = train_all[~is_val].reset_index(drop=True)
 val_df = train_all[is_val].reset_index(drop=True)
 del train_all
 assert set(train_df["run_id"]).isdisjoint(val_df["run_id"])
 assert set(train_df["simulationRun"]).isdisjoint(val_df["simulationRun"])
+
+
+def release_memory():
+    """Collect garbage and hand freed memory back to the operating system. On Linux (e.g. Colab), memory freed after
+    parsing large CSVs otherwise stays reserved by the process, which can push a 12 GB machine over its limit."""
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass                                   # not glibc (Windows, macOS): nothing to do
+
+
+release_memory()
 
 
 def row_hashes(df):
@@ -325,13 +354,14 @@ def window_text(w):
     return f"{m}-min" if m < 60 else f"{m // 60}-hour" if m % 60 == 0 else f"{m / 60:g}-hour"
 
 
-def history_block(df, window, chunk_rows=200_000, out_mean=None, out_std=None):
+def history_block(df, window, chunk_rows=50_000, out_mean=None, out_std=None, x=None):
     """Trailing rolling mean and std (ddof=1) of every reading over the last `window` samples of the same run,
     the current sample included. Matches pandas rolling(window, min_periods=1).mean() and
     rolling(window, min_periods=2).std().fillna(0). Computed with cumulative sums, whole runs at a time, in chunks,
     so the full dataset fits in memory. df must be sorted by run and sample (it is). Writes into out_mean/out_std
-    when given (slices of a preallocated input array), which avoids extra copies."""
-    x = df[FEATURES].to_numpy(np.float32)
+    when given (slices of a preallocated input array), which avoids extra copies; `x` can be passed the same way.
+    Chunks of 50,000 rows keep the float64 working arrays to about 250 MB (a 12 GB Colab machine needs the room)."""
+    x = x if x is not None else df[FEATURES].to_numpy(np.float32)
     run = df["run_id"].to_numpy()
     starts = np.flatnonzero(np.r_[True, run[1:] != run[:-1]])          # first row of each run
     bounds = np.r_[starts, len(run)]
@@ -361,13 +391,12 @@ def history_block(df, window, chunk_rows=200_000, out_mean=None, out_std=None):
 def raw_inputs(df, fs):
     """Unscaled inputs: the 52 readings, then (history sets) the 52 rolling means and the 52 rolling std devs.
     Always a fresh array (copy=True): the inputs are scaled in place afterwards, which must never touch df."""
-    x = df[FEATURES].to_numpy(np.float32, copy=True)
     if fs == "inst":
-        return x
+        return df[FEATURES].to_numpy(np.float32, copy=True)
     k = len(FEATURES)
     out = np.empty((len(df), 3 * k), dtype=np.float32)
-    out[:, :k] = x
-    history_block(df, window_of(fs), out_mean=out[:, k:2 * k], out_std=out[:, 2 * k:])
+    out[:, :k] = df[FEATURES].to_numpy(np.float32)        # the readings go straight into the input array
+    history_block(df, window_of(fs), out_mean=out[:, k:2 * k], out_std=out[:, 2 * k:], x=out[:, :k])
     return out
 
 
@@ -380,15 +409,23 @@ def check_ids(stage):
                              f"dtypes {d.dtypes[['faultNumber', 'simulationRun', 'run_id']].to_dict()}")
 
 
+CHUNK_ROWS_FIT = 500_000
+
+
 def build_inputs(fs):
     """Standardized training (kept rows only) and validation inputs for one input set; scaler fitted on training.
     Scaling is done in place (copy=False) so the full dataset needs one copy of each array, not three."""
     t0 = time.time()
     raw = raw_inputs(train_df, fs)
-    scalers[fs] = StandardScaler(copy=False).fit(raw)
+    release_memory()
+    # Fitted in blocks of rows: one fit on the whole array makes a temporary copy, about a quarter of its size.
+    scalers[fs] = StandardScaler(copy=False)
+    for a in range(0, len(raw), CHUNK_ROWS_FIT):
+        scalers[fs].partial_fit(raw[a:a + CHUNK_ROWS_FIT])
     X_train[fs] = scalers[fs].transform(raw if keep_rows.all() else raw[keep_rows])
     del raw
     X_val[fs] = scalers[fs].transform(raw_inputs(val_df, fs))
+    release_memory()
     print(f"Inputs '{fs}': {X_train[fs].shape[1]} columns ({time.time() - t0:.0f}s)", flush=True)
 
 
@@ -728,8 +765,11 @@ FAMILY_INFO = {
                                             {"key": "rounds", "label": "Boosting rounds", "values": ADA_ROUNDS}]},
     "xgb": {"label": "XGBoost", "params": [{"key": "depth", "label": "Tree depth", "values": XGB_DEPTHS},
                                            {"key": "rounds", "label": "Boosting rounds", "values": XGB_ROUNDS}]},
+    "svm": {"label": "RBF support vector machine", "subset": True,
+            "params": [{"key": "rows", "label": "Training rows (random subset)", "values": SVM_ROWS},
+                       {"key": "C", "label": "C (margin softness)", "values": SVM_C}]},
 }
-PARAM_TAGS = {"depth": "d", "trees": "t", "rounds": "r", "k": "k"}
+PARAM_TAGS = {"depth": "d", "trees": "t", "rounds": "r", "k": "k", "rows": "n", "C": "c"}
 
 
 def unit_id(task, family, params, fs):
@@ -748,13 +788,15 @@ def unit_label(family, params, fs):
         "gb": lambda: f"Gradient boosting, depth {p['depth']}, {p['rounds']} rounds",
         "ada": lambda: f"AdaBoost, depth-{p['depth']} trees, {p['rounds']} rounds",
         "xgb": lambda: f"XGBoost, depth {p['depth']}, {p['rounds']} rounds",
+        "svm": lambda: f"RBF SVM, {p['rows']:,} training rows, C={p['C']}",
     }[family]() + HIST_LABEL[fs]
 
 
 def family_units(family, fs):
     """The separate fits a family needs (one per depth, one per component count, or one for everything)."""
     return {"pcalr": PCA_COMPONENTS, "pcamon": [None], "tree": TREE_DEPTHS, "rf": RF_DEPTHS, "gb": GB_DEPTHS,
-            "ada": ADA_DEPTHS, "xgb": HIST_XGB_DEPTHS if fs == "hist" else XGB_DEPTHS}[family]
+            "ada": ADA_DEPTHS, "xgb": HIST_XGB_DEPTHS if fs == "hist" else XGB_DEPTHS,
+            "svm": [(n, c) for n in SVM_ROWS for c in SVM_C]}[family]
 
 
 def checkpoint_params(family, unit):
@@ -764,6 +806,8 @@ def checkpoint_params(family, unit):
         return [{"stat": s, "k": k} for s in ("T2", "SPE") for k in PCAMON_COMPONENTS]
     if family == "tree":
         return [{"depth": unit}]
+    if family == "svm":
+        return [{"rows": unit[0], "C": unit[1]}]
     key, values = {"rf": ("trees", RF_TREES), "gb": ("rounds", GB_ROUNDS),
                    "ada": ("rounds", ADA_ROUNDS), "xgb": ("rounds", XGB_ROUNDS)}[family]
     return [{"depth": unit, key: v} for v in values]
@@ -772,6 +816,29 @@ def checkpoint_params(family, unit):
 def subsample(X, y, fraction, seed=SEED):
     idx = np.sort(np.random.default_rng(seed).choice(len(X), size=int(len(X) * fraction), replace=False))
     return X[idx], y[idx]
+
+
+def svm_subset(n_rows, n):
+    """The first n of one fixed random order of the training rows, so smaller subsets sit inside larger ones."""
+    return np.sort(np.random.default_rng(SEED).permutation(n_rows)[:min(n, n_rows)])
+
+
+def svm_fit(task, params, X, y):
+    idx = svm_subset(len(X), params["rows"])
+    model = build_tree_model(task, "svm", params)
+    model.fit(X[idx], y[idx])
+    return model
+
+
+def svm_output(task, model, X):
+    """Detection: the signed distance from the SVM's boundary, squashed with the logistic curve so it lies in (0, 1)
+    like the other scores (the ranking, and so every threshold metric, is unchanged; it is not a probability).
+    Diagnosis: the predicted fault (one-vs-one votes). Predictions run in parallel over blocks of rows: every row is
+    compared with every support vector, which is the slow part of an SVM."""
+    fn = model.decision_function if task == "detection" else model.predict
+    blocks = [X[i:i + 50_000] for i in range(0, len(X), 50_000)]
+    out = np.concatenate(joblib.Parallel(n_jobs=-1)(joblib.delayed(fn)(b) for b in blocks))
+    return 1.0 / (1.0 + np.exp(-out.astype("float64"))) if task == "detection" else out
 
 
 def task_output(task, proba, classes):
@@ -798,10 +865,16 @@ def build_tree_model(task, family, params):
         return XGBClassifier(n_estimators=params.get("rounds", max(XGB_ROUNDS)), max_depth=d, learning_rate=LEARNING_RATE,
                              tree_method="hist", n_jobs=-1, random_state=SEED,
                              eval_metric="logloss" if task == "detection" else "mlogloss")
+    if family == "svm":
+        # gamma="scale" = 1 / (inputs x variance of the inputs): the usual default for standardized inputs.
+        return SVC(C=params["C"], kernel="rbf", gamma="scale", cache_size=2000, random_state=SEED,
+                   class_weight="balanced" if task == "detection" else None)
     raise ValueError(family)
 
 
 def fit_tree_model(task, family, depth, X, y):
+    if family == "svm":
+        return svm_fit(task, {"rows": depth[0], "C": depth[1]}, X, y)    # the "unit" of an SVM is (rows, C)
     if family == "ada":
         X, y = subsample(X, y, ADA_SAMPLE)
     model = build_tree_model(task, family, {"depth": depth})
@@ -874,6 +947,11 @@ def tree_checkpoints(task, family, depth, model, Xv, secs, names):
         return [cp({"depth": depth, "rounds": r}, task_output(task, staged[min(r, n_fit)], model.classes_),
                    importances(cum[min(r, n_fit) - 1], "weighted impurity", names), secs * min(r, n_fit) / max(ADA_ROUNDS))
                 for r in ADA_ROUNDS]
+    if family == "svm":
+        n, c = depth
+        extra = {"score_kind": "margin"} if task == "detection" else {}
+        extra.update({"train_rows": int(model.shape_fit_[0]), "n_support": int(model.n_support_.sum())})
+        return [{**cp({"rows": n, "C": c}, svm_output(task, model, Xv), None, secs), "extra": extra}]
     if family == "xgb":
         gain = model.get_booster().get_score(importance_type="gain")
         imp = importances([gain.get(f"f{j}", 0.0) for j in range(len(names))], "gain", names)
@@ -1104,7 +1182,8 @@ def run_family(task, family, fs="inst"):
                 continue
             _, checkpoints = pcamon_checkpoints(Xv, X_train[fs][normal_in_keep], 0.0)
         else:
-            name = f"{task}_pcalr_k{unit}" if family == "pcalr" else f"{task}_{family}_d{unit}{HIST_TAG[fs]}"
+            name = (f"{task}_pcalr_k{unit}" if family == "pcalr" else ids[0] if family == "svm"
+                    else f"{task}_{family}_d{unit}{HIST_TAG[fs]}")
             model_path = MODEL_DIR / f"{name}.joblib"
             if model_path.exists() and not forced(family):
                 model = joblib.load(model_path)            # re-export from the saved model, no retraining
@@ -1168,6 +1247,8 @@ def fit_with_params(task, family, params, X, y):
         return fit_pcalr(task, params["k"], X, y)
     if family == "pcamon":
         raise ValueError("PCA monitoring is fitted on fault-free rows: use pca_monitor_fit")
+    if family == "svm":
+        return svm_fit(task, params, X, y)
     model = build_tree_model(task, family, params)
     if family == "ada":
         X, y = subsample(X, y, ADA_SAMPLE)
@@ -1182,7 +1263,7 @@ def fit_with_params(task, family, params, X, y):
 def sweep_jobs():
     jobs = []
     for task, summaries, key in (("detection", det_summaries, "recall"), ("diagnosis", diag_summaries, "macro_F1")):
-        for family in HISTORY:
+        for family in (f for f in HISTORY if f not in SUBSET_FAMILIES):     # subset-only models: no window sweep
             cands = [s for s in summaries if s["family"] == family and s.get("features") == "hist"]
             if not cands:
                 continue
@@ -1205,6 +1286,8 @@ def final_scores(task, summary, model, X):
     if family == "pcamon":
         t2, spe = pca_monitor_scores(model, X, p["k"])
         return t2 if p["stat"] == "T2" else spe
+    if family == "svm":
+        return svm_output(task, model, X)
     if family == "pcalr":
         proba = chunked(lambda A: model["lr"].predict_proba(model["pca"].transform(A)), X)
         classes = model["lr"].classes_
@@ -1300,21 +1383,23 @@ det_table = summary_table(det_summaries, ["recall", "precision", "F1", "ROC_AUC"
 # ### Choosing the best detection model
 # All models are compared at the same operating point (5% false alarms on validation normal rows), fixed before
 # looking at the results, so the best model is the one that catches the most faults there.
-candidates = det_table[(det_table["family"] != "baseline") & det_table["selectable"]]
+candidates = det_table[(det_table["family"] != "baseline") & det_table["selectable"] & ~det_table["family"].isin(SUBSET_FAMILIES)]
 best_det_id = candidates["recall"].idxmax()
 best_det = next(s for s in det_summaries if s["id"] == best_det_id)
 print("\nBest detection model per family and input set (recall at 5% false alarms):")
-grp = candidates.groupby(["family", "inputs"])["recall"].idxmax()
-print(candidates.loc[grp].sort_values("recall", ascending=False).round(4))
+shown = det_table[(det_table["family"] != "baseline") & det_table["selectable"]]
+grp = shown.groupby(["family", "inputs"])["recall"].idxmax()
+print(shown.loc[grp].sort_values("recall", ascending=False).round(4))
 print("Best detection model:", best_det["label"])
 
 diag_table = summary_table(diag_summaries, ["macro_F1", "accuracy"])
-diag_candidates = diag_table[(diag_table["family"] != "baseline") & diag_table["selectable"]]
+diag_candidates = diag_table[(diag_table["family"] != "baseline") & diag_table["selectable"] & ~diag_table["family"].isin(SUBSET_FAMILIES)]
 best_diag_id = diag_candidates["macro_F1"].idxmax()
 best_diag = next(s for s in diag_summaries if s["id"] == best_diag_id)
 print("\nBest diagnosis model per family and input set (macro-F1):")
-grp = diag_candidates.groupby(["family", "inputs"])["macro_F1"].idxmax()
-print(diag_candidates.loc[grp].sort_values("macro_F1", ascending=False).round(4))
+shown = diag_table[(diag_table["family"] != "baseline") & diag_table["selectable"]]
+grp = shown.groupby(["family", "inputs"])["macro_F1"].idxmax()
+print(shown.loc[grp].sort_values("macro_F1", ascending=False).round(4))
 print("Best diagnosis model:", best_diag["label"])
 
 # ====================================================================================================
@@ -1632,7 +1717,8 @@ def write_manifest(test_results=None):
                      "ada_sample": ADA_SAMPLE, "learning_rate": LEARNING_RATE, "gb_l2": GB_L2,
                      "hist_window": HIST_WINDOW, "hist_windows": sorted([HIST_WINDOW] + SWEEP_WINDOWS), "bootstrap": BOOTSTRAP, "pcamon_alpha": PCAMON_ALPHA,
                      "export_version": EXPORT_VERSION, "inputs": {k: len(v) for k, v in INPUT_NAMES.items()},
-                     "trace_runs": TRACE_RUNS, "lc_run_shares": LC_RUN_SHARES, "lc_strides": LC_STRIDES},
+                     "trace_runs": TRACE_RUNS, "lc_run_shares": LC_RUN_SHARES, "lc_strides": LC_STRIDES,
+                     "subset_families": SUBSET_FAMILIES},
         "families": [{"key": f, **FAMILY_INFO[f]} for f in present],
         "detection": {"models": det_summaries, "best": best_det_id,
                       "best_by_family": best_by_family(det_summaries, "recall"),
@@ -1645,6 +1731,69 @@ def write_manifest(test_results=None):
         "end_to_end": e2e_summary(json.loads(E2E_PATH.read_text())) if E2E_PATH.exists() else None,
     })
 
+
+# ### What a random row split would report (demonstration)
+# The same two models, with identical settings and the same number of training rows, are validated two ways:
+# on unseen runs (this project's split) and on rows held out at random from the same pool. With a random split,
+# a validation row's neighbours 3 minutes earlier and later (and its copies in other fault types' runs) are in
+# training, so the score measures recognition of known runs rather than generalization to new ones.
+
+SPLIT_DEMO_PATH = WEB_DIR / "split_demo.json"
+SPLIT_DEMO_ROWS = 1_000_000          # training rows for every model here (both splits), to keep it quick
+
+
+def split_demo():
+    if SPLIT_DEMO_PATH.exists():
+        print("Split demonstration: reusing", SPLIT_DEMO_PATH.name)
+        return
+    t_all = time.time()
+    rng = np.random.default_rng(SEED)
+    cap = lambda n: np.sort(rng.choice(n, size=min(SPLIT_DEMO_ROWS, n), replace=False))
+    models = {"logreg": lambda task: make_lr("none", None, multiclass=task == "diagnosis"),
+              "tree": lambda task: DecisionTreeClassifier(max_depth=20, random_state=SEED)}
+    labels = {"logreg": "Logistic regression (no penalty)", "tree": "Decision tree (depth 20)"}
+    out = {"train_rows": SPLIT_DEMO_ROWS, "val_share": VAL_FRACTION, "models": labels, "detection": {}, "diagnosis": {}}
+    for task in ("detection", "diagnosis"):
+        X_tr, y_tr, X_v = task_data(task, "inst")
+        y_v = y_val if task == "detection" else faults_val[val_post]
+        # Random split: pool training and validation rows, shuffle, hold out the same share at random.
+        X_pool, y_pool = np.concatenate([X_tr, X_v]), np.concatenate([y_tr, y_v])
+        perm = rng.permutation(len(X_pool))
+        n_val = int(round(len(X_pool) * VAL_FRACTION))
+        r_val, r_tr = np.sort(perm[:n_val]), np.sort(perm[n_val:])
+        if task == "detection":
+            h = pd.util.hash_pandas_object(pd.DataFrame(X_pool), index=False).to_numpy()
+            out["identical_val_rows"] = {"random": int(np.isin(h[r_val], h[r_tr]).sum()), "random_rows": int(n_val),
+                                         "run": QUALITY["val_rows_copied_from_train"], "run_rows": int(len(val_df))}
+            del h
+        splits = {"run": (X_tr, y_tr, X_v, y_v), "random": (X_pool[r_tr], y_pool[r_tr], X_pool[r_val], y_pool[r_val])}
+        for key, build in models.items():
+            res = {}
+            for split, (A, a, B, b) in splits.items():
+                idx = cap(len(A))
+                t0 = time.time()
+                m = build(task).fit(A[idx], a[idx])
+                if task == "detection":
+                    sc = chunked(lambda Z: m.predict_proba(Z)[:, 1], B)
+                    thr = threshold_at_far(b, sc, SELECTION_FAR)
+                    res[split] = {"recall": float((sc[b == 1] >= thr).mean()), "ROC_AUC": float(roc_auc_score(b, sc)),
+                                  "val_rows": int(len(b))}
+                else:
+                    pred = chunked(m.predict, B)
+                    res[split] = {"macro_F1": float(f1_score(b, pred, average="macro")), "accuracy": float((pred == b).mean()),
+                                  "val_rows": int(len(b))}
+                res[split]["fit_seconds"] = round(time.time() - t0, 1)
+                print(f"Split demo {task} {key} {split}: {res[split]}", flush=True)
+                del m
+            out[task][key] = res
+        del X_pool, y_pool, splits
+        gc.collect()
+    out["seconds"] = round(time.time() - t_all)
+    write_json(SPLIT_DEMO_PATH, out)
+
+
+if args.split_demo == "1":
+    split_demo()
 
 export_data_summary()
 manifest_path = WEB_DIR / "manifest.json"

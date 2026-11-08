@@ -26,7 +26,7 @@ export function explainer(task, model, manifest) {
   if (fam === "logreg") {
     if (det) {
       const wx = k => [sub("w", M.n(k)), sub("x", M.n(k))];
-      return { title: "How 52 readings become one alarm", sigmoid: true, html: `
+      return { title: "How logistic regression decides", sigmoid: true, html: `
         <p>Each reading is first standardized: shifted and scaled so that, on the training runs, every variable has mean 0 and
           standard deviation 1. Logistic regression then adds the readings up with one weight each, giving a single number <i>z</i>
           (the log-odds of a fault), and squashes it into a probability between 0 and 1:</p>
@@ -38,7 +38,7 @@ export function explainer(task, model, manifest) {
         <p data-live="threshold"></p>` };
     }
     const k = M.i("k");
-    return { title: "One model, twenty scores", html: `
+    return { title: "How logistic regression decides: one score per fault", html: `
       <p>For diagnosis, logistic regression keeps a separate set of weights for every fault <i>k</i>. Each set turns the 52 readings into
         a score <i>z<sub>k</sub></i>, and the softmax function turns the 20 scores into probabilities that add up to 1. The model names the
         fault with the highest probability:</p>
@@ -170,6 +170,26 @@ export function explainer(task, model, manifest) {
         A tree that is barely better than chance gets a vote near zero. Because the rounds can't run in parallel, this model was trained
         on a random ${pct(manifest.settings.ada_sample ?? 0.25, 0)} of the training rows to keep training time manageable.</p>` };
   }
+  if (fam === "svm") {
+    const x = M.i("x"), K = M.row(M.i("K"), M.paren(sub("x", "i"), M.o(","), x));
+    return { title: "How an RBF support vector machine decides", sigmoid: false, html: `
+      <p>A support vector machine looks for the boundary between the classes with the widest possible margin. With the RBF (radial basis
+        function) kernel the boundary can curve freely: the model compares each new row <i>x</i> with the training rows that ended up on or
+        near the boundary, its <b>support vectors</b> <i>x<sub>i</sub></i>, and adds up their votes, each weighted by how close they are:</p>
+      ${formula(
+        M.block(M.i("f"), M.paren(x), M.o("="), M.sum(M.row(M.i("i"), M.o("∈"), M.t("SV"))), sub("α", "i"), sub("y", "i"), M.sp(0.15), K, M.o("+"), M.i("b"),
+                M.sp(2), K, M.o("="), M.sup(M.i("e"), M.row(M.o("−"), M.i("γ"), M.sup(M.norm(M.row(sub("x", "i"), M.o("−"), x), 2), M.n(2))))))}
+      <p>A training row only counts if it is a support vector, and its kernel value fades with distance (γ sets how fast; here the usual default
+        1 / (inputs × input variance)). <i>C</i> = ${p.C} sets how much the model is punished for training rows on the wrong side of the margin:
+        a larger <i>C</i> fits the training rows more tightly. ${det ? "Its score is <i>f</i>(<i>x</i>), the signed distance from the boundary; positive means fault." :
+        "For 20 faults it trains one SVM for every pair of faults (190 in all) and names the fault that wins the most pairwise votes."}</p>
+      <p><b>Why only ${(p.rows || 0).toLocaleString("en-US")} training rows?</b> Training an exact kernel SVM needs time and memory that grow
+        roughly with the square of the number of rows, and every prediction compares the row with every support vector
+        (${model.n_support != null ? `${model.n_support.toLocaleString("en-US")} here` : "thousands of them"}). With millions of rows that is out of reach, so this model trains on a random subset
+        and is shown for comparison only: it is never chosen as the best model.</p>
+      ${det ? `<p class="note">The score is not a probability. On this site it is passed through the logistic curve so it lies between 0 and 1 like
+        the other models' scores; the ranking of rows, and so every result, is unchanged.</p>` : ""}` };
+  }
   return { title: "How this model decides", html: "" };
 }
 
@@ -196,6 +216,12 @@ export function renderSensors({ chartEl, titleEl, introEl, file, model, faultInd
     introEl.textContent = `PCA monitoring has no per-sensor weights: it measures how far the whole ${n}-input reading sits from normal operation. In practice, operators trace an alarm back to sensors with contribution plots, which split T² or SPE into each sensor's share.`;
     titleEl.textContent = "";
     chartEl.innerHTML = `<div class="empty">Not applicable: T² and SPE use all ${n} inputs together.</div>`;
+    return;
+  }
+  if (!w && fam === "svm") {
+    introEl.textContent = "An RBF support vector machine has no weight per sensor: it compares whole rows with its support vectors. Measuring sensor importance would need permutation importance (shuffling one sensor at a time and re-scoring every row), which isn't computed for this site.";
+    titleEl.textContent = "";
+    chartEl.innerHTML = `<div class="empty">Not available for the RBF SVM.</div>`;
     return;
   }
   if (!w) {
