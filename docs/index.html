@@ -231,8 +231,8 @@
       <div class="learn-body">
         <p>Samples are only 3 minutes apart, and a chemical plant changes slowly, so neighbouring rows of the same run are nearly
           identical. If rows were shuffled into training and validation at random, almost every validation row would have a near-copy
-          a few minutes away in the training data. The model could score well just by recognizing that particular run, not by
-          learning what a fault looks like.</p>
+          a few minutes away in the training data. A model could then score higher than it deserves, by recognizing that particular run rather than
+          learning what a fault looks like. How much higher depends on the model: the measurement below shows it.</p>
         <p>Splitting by run keeps every run entirely on one side. Validation then asks the honest question: how does the model do on a
           run it has never seen? That is the situation a real plant is in.</p>
         <div id="split-demo"></div>
