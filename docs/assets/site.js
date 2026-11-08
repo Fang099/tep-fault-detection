@@ -160,7 +160,8 @@ export function renderChrome() {
   const foot = document.querySelector("footer");
   if (foot) foot.innerHTML = `ES 335 machine learning project. Tennessee Eastman Process data from Kaggle
     (<a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>).
-    <a href="https://github.com/Fang099/tep-fault-detection">Source code on GitHub</a>.`;
+    <a href="https://github.com/Fang099/tep-fault-detection">Source code on GitHub</a>.
+    <a href="index.html#ai-use">AI use and contributions</a>.`;
 }
 
 // "On this page" list built from the page's sections, with the current section highlighted while scrolling.

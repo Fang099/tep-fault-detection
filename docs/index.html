@@ -268,6 +268,53 @@
       <a href="reproduce.html"><b>Reproduce</b><span>Run everything yourself.</span></a>
     </div>
   </section>
+
+  <section class="section" id="ai-use" data-toc="AI use">
+    <h2>AI use and contributions</h2>
+    <p class="intro">This project was built with the help of Claude, an AI assistant by Anthropic. This is who did what.</p>
+    <div class="split even">
+      <div>
+        <h3>What I did</h3>
+        <ul class="tight">
+          <li>Chose the dataset (Tennessee Eastman Process, Rieth et al. 2017) and the research question: detecting and diagnosing
+            faults in a simulated chemical plant.</li>
+          <li>Explored the data and tried simple ML models on my own first, to understand the data and the problem before bringing
+            in AI.</li>
+          <li>Worked out that the data has to be split by simulation run, not by row.</li>
+          <li>Decided which model families to compare and which experiments to run, among them training on all the data, the
+            learning curve on both axes, the single 21-label model as an alternative to the two-stage chain, PCA monitoring with
+            history inputs, the RBF SVM on a subset, the random-split demonstration and which sensors matter.</li>
+          <li>Ran all training, validation and the final test on my own and the lab's computers, and handled the practical problems
+            along the way (memory limits, interrupted runs, choosing which slow models to skip).</li>
+          <li>Reviewed the code and the explanations, asked for corrections where something was unclear or wrong, and tested the
+            website page by page.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>What Claude did</h3>
+        <ul class="tight">
+          <li>Wrote most of the code: the training and evaluation pipeline (<code>tep_pipeline.py</code>) and the website.</li>
+          <li>Designed most of the website's layout.</li>
+          <li>Wrote most of the explanatory text on the site and the documentation of the pipeline.</li>
+          <li>Proposed parts of the method that I then accepted, such as choosing thresholds at a fixed 5% false alarm rate on
+            validation only, and bootstrap intervals over runs.</li>
+          <li>Reviewed the code for bugs before the full training run.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>What AI did not do</h3>
+    <ul class="tight">
+      <li>Every number on this site was computed by the pipeline from the dataset, on runs I carried out. No result was written or
+        estimated by the AI.</li>
+      <li>The test files were used once, after all choices were made on validation.</li>
+    </ul>
+    <h3>How the work was checked</h3>
+    <ul class="tight">
+      <li><b>Leakage:</b> the pipeline counts validation and test rows that exactly match a training row (0 in both).</li>
+      <li><b>Correctness:</b> key calculations, such as the rolling statistics, were checked against standard library implementations.</li>
+      <li><b>The site:</b> every page was loaded and checked after each change.</li>
+    </ul>
+  </section>
 </main>
 </div>
 <footer></footer>
