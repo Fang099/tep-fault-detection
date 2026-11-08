@@ -116,7 +116,7 @@ getJSON("data/split_demo.json").then(d => {
     return `<tr><td>${esc(label)}</td><td class="n">${fmt(r.run[metric])}</td><td class="n">${fmt(r.random[metric])}</td>
       <td class="n">${diff >= 0 ? "+" : "−"}${num(Math.abs(diff), 3)}</td></tr>`;
   };
-  const head = t => `<tr><th>${t}</th><th class="n">Unseen runs<br><span class="note">(this site)</span></th><th class="n">Random rows</th><th class="n">Random split<br>looks better by</th></tr>`;
+  const head = t => `<tr><th>${t}</th><th class="n">Unseen runs<br><span class="note">(this site)</span></th><th class="n">Random rows</th><th class="n">Random split<br>overstates by</th></tr>`;
   const F = v => num(v, 3), id = d.identical_val_rows;
   // Detection is compared on ROC-AUC: a deep tree gives many rows exactly the same score, so a 5% false-alarm
   // threshold can't always be placed between them, and recall at that threshold would be misleading.
@@ -125,7 +125,8 @@ getJSON("data/split_demo.json").then(d => {
     return r ? { k, t, g: r.random[m] - r.run[m] } : null; })).filter(Boolean);
   const top = gaps.reduce((a, b) => (b.g > a.g ? b : a), gaps[0]);
   $("split-demo").innerHTML = `<h4 style="margin:14px 0 4px">Measured: what a random split would have reported</h4>
-    <p class="note" style="margin:0 0 6px">The same models with identical settings, each trained on ${int(d.train_rows)} rows, validated two
+    <p class="note" style="margin:0 0 6px">A random split doesn't make a model better; it makes its <i>score</i> higher than the model
+      deserves, because validation then contains rows the model has (nearly) seen. The same models with identical settings, each trained on ${int(d.train_rows)} rows, validated two
       ways: on whole runs they never saw (as everywhere on this site), and on ${pct(d.val_share, 0)} of the rows held out at random.</p>
     <div class="table-wrap"><table>
       <thead>${head("Detection: ROC-AUC")}</thead><tbody>
