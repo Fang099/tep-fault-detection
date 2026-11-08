@@ -114,23 +114,32 @@ getJSON("data/split_demo.json").then(d => {
     if (!r) return "";
     const diff = r.random[metric] - r.run[metric];
     return `<tr><td>${esc(label)}</td><td class="n">${fmt(r.run[metric])}</td><td class="n">${fmt(r.random[metric])}</td>
-      <td class="n">${diff >= 0 ? "+" : "−"}${task === "detection" ? `${num(Math.abs(diff) * 100, 1)} pts` : num(Math.abs(diff), 3)}</td></tr>`;
+      <td class="n">${diff >= 0 ? "+" : "−"}${num(Math.abs(diff), 3)}</td></tr>`;
   };
   const head = t => `<tr><th>${t}</th><th class="n">Unseen runs<br><span class="note">(this site)</span></th><th class="n">Random rows</th><th class="n">Random split<br>looks better by</th></tr>`;
-  const P = v => pct(v), F = v => num(v, 3), id = d.identical_val_rows;
-  const gap = k => d.detection[k] ? d.detection[k].random.recall - d.detection[k].run.recall : 0;
+  const F = v => num(v, 3), id = d.identical_val_rows;
+  // Detection is compared on ROC-AUC: a deep tree gives many rows exactly the same score, so a 5% false-alarm
+  // threshold can't always be placed between them, and recall at that threshold would be misleading.
+  const gaps = Object.keys(d.models).flatMap(k => ["detection", "diagnosis"].map(t => {
+    const r = d[t]?.[k], m = t === "detection" ? "ROC_AUC" : "macro_F1";
+    return r ? { k, t, g: r.random[m] - r.run[m] } : null; })).filter(Boolean);
+  const top = gaps.reduce((a, b) => (b.g > a.g ? b : a), gaps[0]);
   $("split-demo").innerHTML = `<h4 style="margin:14px 0 4px">Measured: what a random split would have reported</h4>
     <p class="note" style="margin:0 0 6px">The same models with identical settings, each trained on ${int(d.train_rows)} rows, validated two
       ways: on whole runs they never saw (as everywhere on this site), and on ${pct(d.val_share, 0)} of the rows held out at random.</p>
     <div class="table-wrap"><table>
-      <thead>${head("Detection: faults caught at 5% false alarms (recall)")}</thead><tbody>
-      ${Object.entries(d.models).map(([k, l]) => row("detection", k, l, P, "recall")).join("")}</tbody>
+      <thead>${head("Detection: ROC-AUC")}</thead><tbody>
+      ${Object.entries(d.models).map(([k, l]) => row("detection", k, l, F, "ROC_AUC")).join("")}</tbody>
       <thead>${head("Diagnosis: macro-F1")}</thead><tbody>
       ${Object.entries(d.models).map(([k, l]) => row("diagnosis", k, l, F, "macro_F1")).join("")}</tbody></table></div>
     <p class="note" style="margin:6px 0 16px">${id ? `With the random split, ${int(id.random)} of the ${int(id.random_rows)} validation rows
       (${pct(id.random / id.random_rows)}) are exact copies of a training row; with the split by run, ${int(id.run)}. ` : ""}
-      ${gap("tree") > gap("logreg") + 0.01 ? "The flexible tree gains the most: it can memorize individual rows, so near-copies in training inflate its score. The linear model can't memorize, so it barely changes." :
-        "The difference shows how much of a random-split score comes from recognizing runs already seen in training."}</p>`;
+      ${top && top.g > 0.01 ? `The random split flatters the ${esc(d.models[top.k].toLowerCase())} most (${top.t}, +${num(top.g, 3)}): a flexible model
+        can memorize rows, so near-copies of a validation row in training inflate its score. Logistic regression can't memorize, so it
+        barely changes. The effect is modest for these models, but it shows which kind of model a random split would flatter.` :
+        "Here the two splits give almost the same scores: these models gain little from having seen neighbouring rows of the same runs."}
+      Detection is compared on ROC-AUC because a deep tree gives many rows exactly the same score, so a 5% false-alarm threshold
+      can't always be placed between them.</p>`;
 }).catch(() => {});
 
 function ordinal(k) { return k === 1 ? "" : k === 2 ? "2nd" : k === 3 ? "3rd" : `${k}th`; }
