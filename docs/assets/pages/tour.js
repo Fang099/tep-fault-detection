@@ -120,25 +120,36 @@ const STEPS = [
       learning. Each run stays <b>whole on one side</b>. Splitting at random by row instead would let a model peek: rows 3 minutes
       apart are nearly identical, so it would be tested on near-copies of what it learned.</p>`,
     draw(el) {
-      const cols = 20, rows = 21;
-      const valCols = new Set([2, 7, 11, 16]);
+      const runs = 5, n = 40, checkRun = 3, focus = { run: 1, i: 22 };
+      // A fixed pseudo-random 20% of readings for the random split (the same every time), always including the highlighted one.
+      let seed = 11;
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      const randomVal = Array.from({ length: runs }, (_, r) => Array.from({ length: n }, (_, i) =>
+        (r === focus.run && i === focus.i) ? true : (r === focus.run && Math.abs(i - focus.i) === 1) ? false : rnd() < 0.2));
       el.innerHTML = `<div class="tour-row">${seg("t3-mode", [["run", "Split by run (this project)"], ["random", "Split at random"]], "run")}</div>
-        <div class="tour-grid" id="t3-grid" style="--cols:${cols}"></div>
+        <div class="t3-runs" id="t3-runs"></div>
         <div class="legend" style="margin:8px 0 0"><span style="--c:${COLORS.normal}">used to learn</span><span style="--c:${COLORS.fault}">used to check</span></div>
-        <p class="note" style="margin:4px 0 0">Each row is a fault type (top: no fault); each square stands for a group of runs. A square cut
-          in two has some of its rows learned from and others checked.</p>
+        <p class="note" style="margin:2px 0 0">Each bar is one simulation run, each block one reading, in time order (a real run has 500 readings, 3 minutes apart).</p>
         <p class="tour-reveal" id="t3-out"></p>`;
       const draw = mode => {
-        $("t3-grid").innerHTML = Array.from({ length: rows * cols }, (_, i) => {
-          const c = i % cols;
-          return mode === "run" ? `<i class="${valCols.has(c) ? "val" : ""}"></i>` : `<i class="mixed"></i>`;
+        $("t3-runs").innerHTML = Array.from({ length: runs }, (_, r) => {
+          const whole = mode === "run" ? (r === checkRun ? "check" : "learn") : "both";
+          const blocks = Array.from({ length: n }, (_, i) => {
+            const val = mode === "run" ? r === checkRun : randomVal[r][i];
+            const mark = mode === "random" && r === focus.run ? (i === focus.i ? " focus" : Math.abs(i - focus.i) === 1 ? " nb" : "") : "";
+            return `<i class="${val ? "val" : ""}${mark}"></i>`;
+          }).join("");
+          return `<div class="t3-run"><span class="t3-name">Run ${r + 1}</span><div class="t3-bar" style="--n:${n}">${blocks}</div>
+            <span class="t3-tag ${whole}">${whole === "check" ? "checked" : whole === "learn" ? "learned" : "both"}</span></div>`;
         }).join("");
         const s = D.split;
         $("t3-out").innerHTML = mode === "run"
-          ? `Whole columns go to checking: the same run numbers for every fault type, because run 7 of every fault starts from the same simulation.`
-          : s ? `Rows of every run end up on both sides. Measured on this data, a random split makes a deep decision tree look better than it is:
-              ROC-AUC <b>${num(s.detection.tree.random.ROC_AUC, 3)}</b> instead of the honest <b>${num(s.detection.tree.run.ROC_AUC, 3)}</b>.`
-            : "Rows of every run end up on both sides, so the check is no longer on unseen runs.";
+          ? `Each run is used <b>entirely</b> for learning or entirely for checking. The checked run is completely new to the model, just like a
+             new day at a real plant.`
+          : `Now every run is cut up. Look at run ${focus.run + 1}: the outlined reading is used to check the model, but the readings
+             3 minutes before and after it (dashed) were used to learn, and they are almost identical. The model is partly tested on what it
+             has already seen.${s ? ` Measured on this data, that makes a deep decision tree look better than it is: ROC-AUC
+             <b>${num(s.detection.tree.random.ROC_AUC, 3)}</b> instead of the honest <b>${num(s.detection.tree.run.ROC_AUC, 3)}</b>.` : ""}`;
       };
       onSeg("t3-mode", draw);
       draw("run");
@@ -278,7 +289,7 @@ const STEPS = [
       const e = D.e2e, ev = e?.val?.single, et = e?.test?.single_as_validated || e?.test?.single;
       const rows = [
         ["Faulty readings caught", D.det.val.recall, dt.recall, pct],
-        ["False alarms", 1 - D.det.val.normal_recall, 1 - dt.normal_recall, pct],
+        ["False alarms (same threshold)", 1 - D.det.val.normal_recall, 1 - dt.normal_recall, pct],
         ["Diagnosis macro-F1", D.dia.val.macro_F1, gt.macro_F1, v => num(v, 3)],
         ...(ev && et ? [["Whole system (21 answers) macro-F1", ev.macro_F1, et.macro_F1, v => num(v, 3)]] : []),
       ];
@@ -287,8 +298,10 @@ const STEPS = [
       const draw = which => {
         $("t8-tiles").innerHTML = tiles(rows.map(([l, a, b, f]) => [f(which === "val" ? a : b), l, which === "test" && Math.abs(b - a) > 0.015 ? "hl" : ""]));
         $("t8-out").innerHTML = which === "val" ? "These are the numbers the models were chosen on."
-          : `The scores hold up, even slightly better. The one thing that moves is the false-alarm rate: the threshold set for 5% on
-             validation gives ${pct(1 - dt.normal_recall)} on the test runs, so a real plant would recheck it on its own normal data.`;
+          : `The scores hold up, even slightly better. The threshold was <b>not</b> re-tuned on the test set: it is the one chosen on
+             validation, kept exactly as it was. On the new runs, ${pct(1 - dt.normal_recall)} of normal readings land above it instead of 5%,
+             because new data never looks exactly like the data a threshold was set on. So a real plant would recheck the threshold on its
+             own normal operation.`;
       };
       onSeg("t8-which", draw);
       draw("val");
