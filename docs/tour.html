@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guided tour · TEP fault monitor</title>
+<script>try{var t=localStorage.getItem("tep-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="assets/style.css">
+<script type="module" src="assets/pages/tour.js"></script>
+</head>
+<body data-page="tour">
+<nav id="topnav"></nav>
+<main class="tour-main">
+  <div class="tour" id="tour" aria-live="polite">
+    <div class="tour-top">
+      <span class="tour-count" id="tour-count"></span>
+      <div class="tour-progress" aria-hidden="true"><i id="tour-bar"></i></div>
+    </div>
+    <p class="tour-kicker" id="tour-kicker"></p>
+    <h1 class="tour-title" id="tour-title" tabindex="-1">Loading the tour…</h1>
+    <div class="tour-text" id="tour-text"></div>
+    <div class="tour-stage" id="tour-stage"></div>
+    <div class="tour-nav">
+      <button class="btn" type="button" id="tour-prev">← Back</button>
+      <div class="tour-dots" id="tour-dots" role="tablist" aria-label="Steps"></div>
+      <button class="btn primary" type="button" id="tour-next">Next →</button>
+    </div>
+    <p class="tour-hint">Use the ← and → keys to move between steps.</p>
+  </div>
+</main>
+<footer></footer>
+</body>
+</html>

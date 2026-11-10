@@ -2,6 +2,7 @@
 
 export const PAGES = [
   { key: "overview", href: "index.html", label: "Overview" },
+  { key: "tour", href: "tour.html", label: "Tour" },
   { key: "detection", href: "detection.html", label: "Detection" },
   { key: "diagnosis", href: "diagnosis.html", label: "Diagnosis" },
   { key: "regularization", href: "regularization.html", label: "Regularization" },
@@ -157,11 +158,43 @@ export function renderChrome() {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => themeButton(btn));
   }
   buildSideToc();
+  addSummaryButton(page);
   const foot = document.querySelector("footer");
   if (foot) foot.innerHTML = `ES 335 machine learning project. Tennessee Eastman Process data from Kaggle
     (<a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>).
     <a href="https://github.com/Fang099/tep-fault-detection">Source code on GitHub</a>.
     <a href="index.html#ai-use">AI use and contributions</a>.`;
+}
+
+// "Summary" button in the page header: opens the page's main insights (computed in summaries.js, loaded on first use).
+function addSummaryButton(page) {
+  const head = document.querySelector(".page-head .inner");
+  if (!head || page === "tour") return;
+  const wrap = document.createElement("div");
+  wrap.className = "summary-wrap";
+  wrap.innerHTML = `<button class="btn summary-btn" type="button" aria-expanded="false" aria-controls="page-summary">Summary of this page ▾</button>
+    <div class="page-summary" id="page-summary" hidden></div>`;
+  const after = head.querySelector(".tour-start") || head.querySelector(".lede");     // right under the intro text
+  if (after) after.after(wrap); else head.appendChild(wrap);
+  const btn = wrap.querySelector("button"), panel = wrap.querySelector(".page-summary");
+  let loaded = false;
+  btn.addEventListener("click", async () => {
+    const open = panel.hidden;
+    panel.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+    btn.textContent = open ? "Summary of this page ▴" : "Summary of this page ▾";
+    if (!open || loaded) return;
+    panel.innerHTML = `<p class="note">Working out the summary…</p>`;
+    try {
+      const { pageSummary } = await import("./summaries.js");
+      const items = await pageSummary(page);
+      panel.innerHTML = items?.length ? `<p class="summary-title">What this page shows</p><ul>${items.map(i => `<li>${i}</li>`).join("")}</ul>`
+        : `<p class="note">No summary for this page.</p>`;
+      loaded = true;
+    } catch (e) {
+      panel.innerHTML = `<p class="note">The summary could not be loaded (${esc(e.message || e)}).</p>`;
+    }
+  });
 }
 
 // "On this page" list built from the page's sections, with the current section highlighted while scrolling.
