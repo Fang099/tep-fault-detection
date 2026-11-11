@@ -135,8 +135,8 @@ function renderPerformance() {
   const gain = metricOf(task, bestReg) - metricOf(task, bestNone);
   $("callout-perf").innerHTML = gain <= 0.005
     ? `<b>Regularization doesn't improve accuracy here.</b> The best regularized model is within ${fmtMetric(task, Math.abs(gain))} of the
-       unregularized one, and stronger regularization only makes things worse. That is expected: with 52 inputs and hundreds of
-       thousands of training rows, a linear model has little room to overfit. What lasso does offer is a smaller model:
+       unregularized one, and stronger regularization only makes things worse. That is expected: with 52 inputs and millions of
+       training rows, a linear model has little room to overfit. What lasso does offer is a smaller model:
        ${frugal ? `${frugal.coef_nonzero} sensors get within 0.02 of the best result.` : ""}`
     : `<b>Mild regularization helps a little:</b> the best regularized model beats the unregularized one by ${fmtMetric(task, gain)}.
        Stronger regularization (smaller C) eventually removes too much information.`;

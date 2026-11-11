@@ -276,9 +276,10 @@ function renderCorrPanel(pairs) {
   $("corr-panel").innerHTML = `<h3 style="margin-top:0">Most strongly related pairs</h3>
     <table><tbody>${pairs.slice(0, 6).map(([i, j, r]) => `<tr><td>${feats[i]} and ${feats[j]}<div class="note">${esc(VARIABLES[feats[i]])} · ${esc(VARIABLES[feats[j]])}</div></td>
       <td class="n">${num(r, 3)}</td></tr>`).join("")}</tbody></table>
-    <p class="note" style="margin:10px 0 0">${strong === 0 ? "No pair reaches a correlation of 0.8 in this data." : `${strong} pairs have`} ${strong === 0 ? "" : "a correlation of 0.8 or more in either direction."} Many sensors measure
-      linked parts of the plant, so the 52 readings carry much less independent information than their number suggests. That is what PCA
-      exploits, and why a model's individual coefficients can be unstable without regularization (this is called <i>multicollinearity</i>).</p>
+    <p class="note" style="margin:10px 0 0">${strong === 0 ? "No pair reaches a correlation of 0.8 in this data." : `${strong} pairs have`} ${strong === 0 ? "" : "a correlation of 0.8 or more in either direction."} Some sensors measure
+      linked parts of the plant, so a few of the 52 readings largely repeat each other. That is why a model's individual coefficients
+      can be unstable without regularization (this is called <i>multicollinearity</i>). Most pairs, though, are only weakly related:
+      the PCA plot below shows how many separate directions the readings really have.</p>
     <p class="note" style="margin:8px 0 0"><b>Can a correlation really be ±1?</b> Yes, when one variable is set directly from another.
       The plant runs under automatic control: for example, the separator level (xmeas_12) is held steady by a controller that opens
       the drain valve (xmv_7) in proportion to the measured level, so the two correlate at +1.000. The strongest negative pair is
@@ -304,8 +305,11 @@ function renderPca() {
     tip: (s_, p) => `Component ${p[0]}: <b>${pct(ind[p[0] - 1][1])}</b><br>First ${p[0]} together: <b>${pct(cum[p[0] - 1][1])}</b>`,
     hoverRadius: 14,
   });
+  const few = k90 <= v.length * 0.4;
   $("pca-callout").innerHTML = `<b>${k90} of the 52 components hold 90% of normal variation</b>${k99 ? `, and ${k99} hold 99%` : ""}.
-    The first component alone captures ${pct(v[0])}. ${k90 <= v.length * 0.6
-      ? "Normal operation varies along far fewer directions than there are sensors, which is the idea behind"
-      : "Here the variation is spread over many directions, so a few components can't summarize normal operation well. That limits"} <a href="detection.html?family=pcamon">PCA monitoring</a>${k90 <= v.length * 0.6 ? ": anything far outside those directions is suspicious" : ""}.`;
+    The first component alone captures ${pct(v[0])}. ${few
+      ? `Normal operation varies along far fewer directions than there are sensors, which is the idea behind <a href="detection.html?family=pcamon">PCA monitoring</a>: anything far outside those directions is suspicious.`
+      : `So although some sensors are strongly correlated, normal variation is spread over many directions: a handful of components
+         cannot summarize it. That is why <a href="detection.html?family=pcamon">PCA monitoring</a> has to keep many components, and why
+         compressing the readings before a logistic regression loses fault information (<a href="#models">the models</a>).`}`;
 }

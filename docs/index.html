@@ -16,7 +16,7 @@
 <header class="page-head"><div class="inner">
   <h1>Detecting and diagnosing faults in a chemical plant</h1>
   <p class="lede">How well can machine learning models spot faults in the Tennessee Eastman Process, and name which fault it is,
-    from a single snapshot of 52 sensor readings? And how quickly can a fault be caught?</p>
+    from the plant's 52 sensor readings and their recent history? And how quickly can a fault be caught?</p>
   <p class="tour-start"><a class="btn primary" href="tour.html">Start the guided tour →</a>
     <span class="note">&nbsp;Nine short steps, about five minutes.</span></p>
 
@@ -93,19 +93,40 @@
 <div class="layout">
 <aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <section class="section" id="tasks" data-toc="Two tasks">
-    <h2>Two tasks</h2>
+  <section class="section" id="tasks" data-toc="The problem">
+    <h2>The problem <span class="term">(problem formulation)</span></h2>
     <p class="intro">Process faults can reduce product quality, disrupt operations and create safety risks.
       An operator needs to know two things, quickly and reliably.</p>
     <div class="linkgrid">
-      <a href="detection.html"><b>Detection</b><span>Is a fault happening right now? A yes-or-no answer from a single
-        3-minute snapshot of the plant, judged on how many faults it catches against how many false alarms it raises.</span></a>
+      <a href="detection.html"><b>Detection</b><span>Is a fault happening right now? A yes-or-no answer every 3 minutes,
+        judged on how many faulty readings it catches against how many false alarms it raises.</span></a>
       <a href="diagnosis.html"><b>Diagnosis</b><span>Which of the 20 fault types is it? Judged on how well it names every fault,
         hard ones included (macro-F1), and on which faults it confuses.</span></a>
     </div>
-    <p class="callout"><b>Instantaneous measurements only.</b> Every model sees one row at a time: the 52 process variables at a single
-      moment, with no history. That keeps the models simple and comparable, and it is also the main limitation: some faults only
-      show up as slow drifts that a single snapshot can't reveal.</p>
+    <div class="table-wrap" style="margin-top:14px"><table class="frame">
+      <tbody>
+        <tr><th scope="row">The question</th><td>From the plant's sensor readings alone, can a model tell (1) whether a fault is active
+          and (2) which of 20 known faults it is, and how soon after the fault starts?</td></tr>
+        <tr><th scope="row">One row of data</th><td>One 3-minute time step of one simulation run: 52 readings (41 measurements and
+          11 valve positions).</td></tr>
+        <tr><th scope="row">The target</th><td><b>Detection:</b> faulty (1) if the run's fault has been switched on by that time step,
+          otherwise normal (0). <b>Diagnosis:</b> the fault number, 1 to 20, for rows where a fault is active.
+          <a href="#labels">How rows are labelled</a>.</td></tr>
+        <tr><th scope="row">When a prediction is made</th><td>Every 3 minutes while the plant runs, as soon as a new set of readings arrives.</td></tr>
+        <tr><th scope="row">What is known at that moment</th><td>The 52 readings at that time step and, for the history models, the same
+          readings over at most the previous hour of the same run, summarized as a rolling mean and standard deviation. Never used:
+          anything from the future, other runs, the time since the run started, or the fault label.</td></tr>
+        <tr><th scope="row">How it is judged</th><td>On simulation runs the model never saw in training. Detection: the share of faulty
+          rows caught when 5% of normal rows raise a false alarm. Diagnosis: macro-F1 over the 20 faults.
+          <a href="#protocol">How models are judged</a>.</td></tr>
+        <tr><th scope="row">What the results can claim</th><td>How well these models separate these 20 simulated faults from normal
+          operation in this one simulated plant. They say nothing about a real plant, about kinds of fault that are not among the 20,
+          or about what causes a fault. <a href="results.html#limits">Limitations</a>.</td></tr>
+      </tbody></table></div>
+    <p class="callout"><b>Two kinds of input.</b> Every model is trained on the current readings alone (52 inputs). Logistic regression,
+      PCA monitoring, random forest, XGBoost and the SVM are also trained with a short history: each reading plus its rolling mean and
+      standard deviation over the last 6 minutes to 1 hour (156 inputs). The best models use one hour of history; comparing the two
+      kinds shows how much the recent past adds.</p>
   </section>
 
   <section class="section" id="process" data-toc="The process">
@@ -144,6 +165,18 @@
         <tr><td>Faulty testing</td><td class="n">20 × 500</td><td class="n">960</td><td class="n">9,600,000</td><td>sample 160 (8 hours)</td></tr>
       </tbody></table></div>
     <div class="tiles" id="data-tiles" style="margin-top:14px"></div>
+    <h3>Access and limits</h3>
+    <ul class="tight">
+      <li><b>Access.</b> The four CSV files are downloaded from Kaggle, which needs a free account. They are too large to keep in
+        this project's repository (about 15 million rows in total), so the repository holds the code and the results, not the data.
+        The original files were published on Harvard Dataverse by Rieth et al. (2017); the licence is stated on the dataset's page.</li>
+      <li><b>What is in a row.</b> Three bookkeeping columns (<code>faultNumber</code>, <code>simulationRun</code>,
+        <code>sample</code>) and the 52 readings. The bookkeeping columns are used to build the labels and the split; they are
+        never given to a model.</li>
+      <li><b>What the data cannot show.</b> It is simulated: one plant in one operating mode, 20 fault types, each switched on at a
+        fixed time and never combined. There are no sensor failures, no missing values and no faults other than those 20, so none of
+        these can be studied here. No personal or confidential data is involved.</li>
+    </ul>
   </section>
 
 
@@ -193,26 +226,93 @@
     <p class="intro">A faulty run starts out normal; the fault is switched on partway through. Rows before that moment are labelled
       normal, rows after it faulty. Fault-free runs are normal throughout.</p>
     <div id="timelines"></div>
-    <p class="callout"><b>A consequence:</b> faulty rows outnumber normal ones roughly ten to one, so a model that always answers "fault"
-      already scores an F1 of about 0.96. That's why this site reports false alarms and recall on normal operation alongside the usual metrics.</p>
+    <p class="callout"><b>Two consequences.</b> Faulty rows outnumber normal ones roughly ten to one, so a model that always answers "fault"
+      already scores an F1 of about 0.96. That's why this site reports false alarms and recall on normal operation alongside the usual metrics.
+      And because every training fault starts after exactly one hour, the first hour of every run is always normal: the models learn
+      this, which matters for how the false alarm rate should be read (<a href="results.html#far-note">details</a>).</p>
+  </section>
+
+  <section class="section" id="prep" data-toc="Preprocessing">
+    <h2>Preparing the data <span class="term">(preprocessing)</span></h2>
+    <p class="intro">Everything that is done to the readings before a model sees them, and what each step is fitted on. Anything that
+      is <i>learned</i> from data is learned from training runs only, then applied unchanged to validation and test.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Step</th><th>What it does and why</th><th>Fitted on</th></tr></thead>
+      <tbody>
+        <tr><td><b>Cleaning</b></td><td>Nothing is removed or filled in. The checks above found no missing values and no constant
+          variables, and the repeated rows are genuine readings, so they are kept.</td><td>Nothing to fit</td></tr>
+        <tr><td><b>Labels</b></td><td>Built from <code>faultNumber</code> and <code>sample</code>: a row is faulty once its run's fault
+          has been switched on. A fixed rule, the same for every split.</td><td>Nothing to fit</td></tr>
+        <tr><td><b>History inputs</b></td><td>For each reading, the mean and standard deviation over the last <i>W</i> samples of the
+          <i>same run</i>, the current one included. They only look backwards and never cross from one run into another, so a
+          prediction never uses a reading from the future. At the start of a run the window holds fewer samples.</td>
+          <td>Nothing to fit (a fixed formula applied run by run)</td></tr>
+        <tr><td><b>Standardizing</b></td><td>Each input is shifted and scaled to mean 0 and standard deviation 1. The readings have very
+          different units (a flow in thousands, a composition in fractions), which matters for logistic regression with a penalty,
+          PCA and the SVM. Trees are not affected by it.</td><td>Training runs only</td></tr>
+        <tr><td><b>PCA</b> (PCA + logistic regression)</td><td>Replaces the 52 standardized readings by their first <i>k</i> principal
+          components.</td><td>Training runs only</td></tr>
+        <tr><td><b>PCA monitoring</b></td><td>Its own standardizing and PCA describe what normal operation looks like, as in classical
+          process monitoring.</td><td>Fault-free training runs only</td></tr>
+        <tr><td><b>Choosing sensors</b></td><td>No sensor is dropped beforehand. Lasso sets some weights to zero as part of fitting the
+          model (<a href="regularization.html">Regularization</a>).</td><td>Training runs only</td></tr>
+        <tr><td><b>Alarm threshold</b></td><td>The score above which a row counts as an alarm, set so that 5% of normal rows are above
+          it.</td><td>Validation runs only; kept unchanged for the test</td></tr>
+      </tbody></table></div>
+    <p class="note">For the final test, the chosen models and their standardizing are fitted again on the training and validation runs
+      together; the test files are only ever transformed and scored. As a check, the pipeline counts validation and test rows that are
+      identical to a training row: 0 in both cases.</p>
   </section>
 
   <section class="section" id="models" data-toc="The models">
-    <h2>The models</h2>
-    <p class="intro">Every model is trained twice: once for detection and once for diagnosis.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Family</th><th>What it does</th><th>Settings explored</th></tr></thead>
+    <h2>The models <span class="term">(baseline and method selection)</span></h2>
+    <p class="intro">Ten kinds of model, from a baseline that ignores the sensors to boosted trees. Each is trained twice, once for
+      detection and once for diagnosis (PCA monitoring only detects). They were chosen to answer a question in order: is any model
+      needed, is a linear one enough, does a non-linear one help, and does combining many trees help further? A more complex model
+      is only worth it if it beats the simpler one on validation.</p>
+    <div class="table-wrap"><table class="methods">
+      <thead><tr><th>Family</th><th>Core idea and what it assumes</th><th>Why it is here</th><th>Settings explored</th></tr></thead>
       <tbody>
-        <tr><td><b>Majority baseline</b></td><td>Ignores the sensors and always predicts the most common class.
-          Any useful model has to beat it.</td><td>None</td></tr>
-        <tr><td><b>Logistic regression</b></td><td>Adds up the 52 readings with one learned weight each and turns the sum into a probability.
-          A linear model: simple, fast and easy to inspect.</td><td>Class weighting (detection), penalty (none, lasso, ridge), strength C</td></tr>
-        <tr><td><b>Decision tree</b></td><td>A chain of yes-or-no questions about the readings. Can capture non-linear patterns and is easy to read.</td><td>Maximum depth</td></tr>
-        <tr><td><b>Random forest</b></td><td>Many trees, each grown on a random sample of rows and sensors, averaged together (bagging).</td><td>Maximum depth, number of trees</td></tr>
-        <tr><td><b>Gradient boosting</b></td><td>Trees built one after another, each correcting the errors of those before it.</td><td>Tree depth, boosting rounds</td></tr>
-        <tr><td><b>AdaBoost</b></td><td>Small trees built one after another, re-weighting the rows the previous trees got wrong, combined by weighted vote.</td><td>Depth of each tree, boosting rounds</td></tr>
-        <tr><td><b>XGBoost</b></td><td>A fast, regularized implementation of gradient boosting.</td><td>Tree depth, boosting rounds</td></tr>
+        <tr><td><b>Majority baseline</b></td><td>Ignores the sensors and always predicts the most common class.</td>
+          <td>The floor every model has to beat. Because 91% of rows are faulty it scores a high accuracy and F1 by alarming on
+          everything, which shows why those two metrics are not used to rank models here.</td><td>None</td></tr>
+        <tr><td><b>Logistic regression</b></td><td>A weighted sum of the inputs turned into a probability; the weights minimize the
+          log loss (plus a penalty, if any). Assumes each input pushes the odds of a fault up or down by a fixed amount: a straight
+          boundary, no interactions between sensors.</td>
+          <td>The simplest real model: fast on millions of rows, and its weights can be read. It is the reference that every more
+          complex model is compared with.</td><td>Class weighting (detection), penalty (none, lasso, ridge), strength C, history window</td></tr>
+        <tr><td><b>PCA + logistic regression</b></td><td>Compresses the 52 readings into their first <i>k</i> principal components,
+          then fits a logistic regression. Assumes the directions in which the readings vary most are also the ones that separate faults.</td>
+          <td>Many sensors are correlated, so a compressed version might be enough. It tests that idea (it is not: the score keeps rising as
+          components are added, so directions with little normal variation carry much of the fault signal).</td><td>Number of components</td></tr>
+        <tr><td><b>PCA monitoring</b> (T² / SPE)</td><td>Learns what normal operation looks like from fault-free runs only, then scores a
+          row by how far it lies from normal. Assumes normal operation is one roughly bell-shaped cloud and that faults leave it.
+          Uses no fault labels.</td>
+          <td>The classical method of the process-monitoring field, so the supervised models are compared with what a plant would
+          use by default. It is also the only method here that needs no examples of faults at all.</td><td>Statistic, number of components, history window</td></tr>
+        <tr><td><b>Decision tree</b></td><td>A chain of yes-or-no questions about single readings, each chosen to make the two groups
+          purer. Assumes little, so it can follow non-linear patterns, but a deep tree fits noise and changes a lot with the data.</td>
+          <td>The simplest non-linear model, and readable. A fault often shows as a reading crossing a level, which is exactly what a
+          tree asks about.</td><td>Maximum depth</td></tr>
+        <tr><td><b>Random forest</b></td><td>Many deep trees, each grown on a random sample of rows and sensors, averaged (bagging).
+          Averaging cancels much of the single tree's instability.</td>
+          <td>Tests whether the tree's weakness is its variance.</td><td>Maximum depth, number of trees, history window</td></tr>
+        <tr><td><b>Gradient boosting</b></td><td>Shallow trees added one after another, each fitted to the errors the earlier ones
+          still make (the gradient of the log loss). Builds a complex model out of many small corrections.</td>
+          <td>Usually the strongest kind of model on tables of numbers like this one.</td><td>Tree depth, boosting rounds</td></tr>
+        <tr><td><b>AdaBoost</b></td><td>Small trees built one after another, each giving more weight to the rows the previous ones got
+          wrong, combined by a weighted vote. Sensitive to rows that cannot be classified, because it keeps adding weight to them.</td>
+          <td>The original boosting method, for comparison with gradient boosting on data where some faulty rows look normal.</td><td>Depth of each tree, boosting rounds</td></tr>
+        <tr><td><b>XGBoost</b></td><td>Gradient boosting with a penalty on the size of each tree's answers, in a faster
+          implementation that uses all processor cores.</td>
+          <td>Fast enough to train on every row with history inputs, which was not practical for the other boosted models.</td><td>Tree depth, boosting rounds, history window</td></tr>
+        <tr><td><b>RBF support vector machine</b></td><td>Looks for the boundary with the widest margin, where two rows count as
+          similar when their readings are close. Assumes rows with similar readings share a label. Its cost grows with the square of
+          the number of training rows.</td>
+          <td>A different kind of non-linear model (similarity instead of trees). It can only be trained on a small random subset
+          (up to 20,000 rows), so it is shown for comparison and never chosen as the best model.</td><td>Training rows, C, history window</td></tr>
       </tbody></table></div>
+    <p class="note">How each family did, best settings first: <a href="results.html#families">the best of each model</a>.</p>
   </section>
 
   <section class="section" id="protocol" data-toc="How models are judged">
@@ -256,8 +356,8 @@
     </details>
   </section>
 
-  <section class="section" id="results" data-toc="Results so far">
-    <h2>Results so far</h2>
+  <section class="section" id="results" data-toc="Results">
+    <h2>Results in brief</h2>
     <p class="intro" id="results-intro"></p>
     <div class="tiles" id="result-tiles"></div>
     <h3>Explore</h3>
@@ -266,7 +366,7 @@
       <a href="diagnosis.html"><b>Diagnosis</b><span>See which faults get confused with which.</span></a>
       <a href="regularization.html"><b>Regularization</b><span>Lasso and ridge for logistic regression: which sensors survive.</span></a>
       <a href="compare.html"><b>Compare</b><span>Any two models side by side, and every model ranked.</span></a>
-      <a href="results.html"><b>Results</b><span>Test results, findings and limitations.</span></a>
+      <a href="results.html"><b>Results</b><span>Conclusions, the final test, where the models fail, and limitations.</span></a>
       <a href="reproduce.html"><b>Reproduce</b><span>Run everything yourself.</span></a>
     </div>
   </section>

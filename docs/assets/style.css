@@ -450,3 +450,24 @@ a.btn { display: inline-block; text-decoration: none; }
 .t3-tag { font-size: 12.5px; color: var(--muted); }
 .t3-tag.check { color: var(--c-fault); font-weight: 600; }
 @media (max-width: 640px) { .t3-run { grid-template-columns: 42px 1fr; } .t3-tag { display: none; } .t3-bar { gap: 1px; } .t3-bar i { height: 20px; } }
+
+/* ---------- Problem framing, methods table, conclusions ---------- */
+table.frame th { width: 12.5em; color: var(--text); font-size: 14.5px; border-bottom-color: var(--grid); }
+table.frame tr:last-child th, table.frame tr:last-child td { border-bottom: 0; }
+@media (max-width: 640px) {
+  table.frame th, table.frame td { display: block; width: auto; }
+  table.frame th { border-bottom: 0; padding-bottom: 0; }
+  table.frame td { padding-top: 2px; padding-left: 14px; }
+}
+table.methods { min-width: 880px; }
+table.methods td:first-child { min-width: 9.5em; }
+table.methods td:nth-child(4) { min-width: 11em; color: var(--muted); }
+ol.conclusions { margin: 6px 0; padding-left: 24px; max-width: 82ch; }
+ol.conclusions li { margin: 9px 0; }
+
+/* ---------- Phones: show that the page links scroll sideways; larger small buttons ---------- */
+@media (max-width: 900px) {
+  .navlinks { padding-right: 28px; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent);
+              mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); }
+}
+@media (max-width: 700px) { .btn.small { padding: 7px 12px; } }

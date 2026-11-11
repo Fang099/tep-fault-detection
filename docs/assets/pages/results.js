@@ -61,13 +61,19 @@ function renderFindings(manifest) {
       return t;
     })(),
     (() => {
-      const pm = bestModel(manifest, "detection", "pcamon");
-      if (!pm || !lrDet) return "";
-      const lrInst = det.filter(m => familyOf(m) === "logreg").reduce((x, y) => (y.val.recall > x.val.recall ? y : x));
-      return `<b>${pm.val.recall > lrInst.val.recall ? "The label-free textbook method is a strong baseline." : "The label-free textbook method trails the supervised models."}</b> PCA monitoring (${esc(pm.label)}) never sees a fault label,
-        yet catches ${pct(pm.val.recall)} of faulty rows at 5% false alarms, ${pm.val.recall > lrInst.val.recall ? "more than the" : "against"}
-        ${pct(lrInst.val.recall)} ${pm.val.recall > lrInst.val.recall ? "" : "for the"} best logistic regression on the same snapshots. Supervised non-linear models do better
-        because they learn what each fault looks like. See <a href="${modelLink("detection.html", pm)}">PCA monitoring</a>.`;
+      // Like for like: PCA monitoring and logistic regression on the same inputs (current readings), then each with history.
+      const fam = (k, hist) => { const c = manifest.detection.models.filter(m => m.selectable !== false && familyOf(m) === k && isHist(m.features) === hist);
+        return c.length ? c.reduce((x, y) => (y.val.recall > x.val.recall ? y : x)) : null; };
+      const pmI = fam("pcamon", false), lrI = fam("logreg", false), pmH = fam("pcamon", true), lrH = fam("logreg", true);
+      if (!pmI || !lrI) return "";
+      const wins = pmI.val.recall > lrI.val.recall;
+      return `<b>${wins ? "The label-free textbook method is a strong baseline." : "The label-free textbook method trails the supervised models."}</b>
+        PCA monitoring never sees a fault label: it only learns what normal operation looks like. On the current readings alone it
+        catches ${pct(pmI.val.recall)} of faulty rows at 5% false alarms, ${wins ? "more than" : "against"} the ${pct(lrI.val.recall)} of the best
+        logistic regression on the same inputs.${pmH && lrH ? ` With history inputs the order ${(pmH.val.recall > lrH.val.recall) === wins ? "stays the same" : "reverses"}:
+        ${pct(pmH.val.recall)} for PCA monitoring (${windowText(windowOf(pmH.features))}) against ${pct(lrH.val.recall)} for logistic regression
+        (${windowText(windowOf(lrH.features))}).` : ""} Supervised non-linear models do better still because they learn what each fault looks like.
+        See <a href="${modelLink("detection.html", pmH || pmI)}">PCA monitoring</a>.`;
     })(),
     `<b>Accuracy and F1 are misleading here.</b> The majority baseline scores F1 ${num(base.val.F1, 3)} by alarming on every row,
      including every normal one. Compared at 5% false alarms, it catches nothing.`,
@@ -82,7 +88,7 @@ function renderFindings(manifest) {
       return gain <= 0.005
         ? `<b>Regularization does not improve accuracy.</b> The best regularized detection model reaches ${pct(regDet.val.recall)}
            (${esc(regDet.label)}) against ${pct(noneBest.val.recall)} without a penalty; for diagnosis, macro-F1 ${num(regDia.val.macro_F1, 3)}
-           against ${num(noneDia.val.macro_F1, 3)}. With 52 inputs and hundreds of thousands of rows, there is little overfitting to prevent.`
+           against ${num(noneDia.val.macro_F1, 3)}. With 52 inputs and millions of training rows, there is little overfitting to prevent.`
         : `<b>Mild regularization helps slightly.</b> Detection: ${pct(regDet.val.recall)} (${esc(regDet.label)}) against
            ${pct(noneBest.val.recall)} without a penalty. Diagnosis: macro-F1 ${num(regDia.val.macro_F1, 3)} against ${num(noneDia.val.macro_F1, 3)}.`;
     })(),
@@ -192,21 +198,83 @@ function renderFamilies(manifest) {
 }
 
 // ---------- Final test ----------
-// Summary of how the test compares with validation, computed from the manifest.
-function testCallout(manifest, test) {
+// What share of the "normal" rows in each split comes from the first hour of a run (always fault-free in this dataset).
+function normalMix(manifest, test) {
+  const d = manifest.dataset, on = d.fault_onset?.train ?? 20;
+  const bd = manifest.detection.best, bv = manifest.detection.models.find(m => m.id === bd)?.val, bt = test?.detection?.[bd];
+  if (!bv || !bt) return null;
+  const valNormal = bv.TN + bv.FP, testNormal = bt.TN + bt.FP;
+  const valFirst = d.val_runs * on, testFirst = (test.runs_per_fault * 21) * on;   // every run starts with `on` normal samples
+  return { on, hours: (on * d.sample_minutes) / 60, valNormal, testNormal, valShare: valFirst / valNormal, testShare: testFirst / testNormal,
+           valAlarms: bv.FP, valLater: valNormal - valFirst };
+}
+
+// Summary of how the test compares with validation, computed from the manifest and the stored test scores.
+function testCallout(manifest, test, like) {
   const bd = manifest.detection.best, bg = manifest.diagnosis.best;
   const dv = manifest.detection.models.find(m => m.id === bd)?.val, gv = manifest.diagnosis.models.find(m => m.id === bg)?.val;
   const dt = test.detection[bd], gt = test.diagnosis[bg], da = test.as_validated?.detection?.[bd];
   if (!dv || !gv || !dt || !gt) return "";
   const far = r => 1 - r.normal_recall;
-  const close = Math.abs(dt.recall - dv.recall) < 0.02 && Math.abs(gt.macro_F1 - gv.macro_F1) < 0.02;
-  return `<p class="callout"><b>${close ? "The test confirms the validation results." : "The test differs from validation."}</b>
-    Detection catches ${pct(dt.recall)} of faulty rows on test against ${pct(dv.recall)} on validation; diagnosis reaches macro-F1
-    ${num(gt.macro_F1, 3)} against ${num(gv.macro_F1, 3)}. ${da ? `The false alarm rate drifts from the 5% set on validation to
-    ${pct(far(da))} on test for the exact validated model (${pct(far(dt))} after retraining). The threshold sits in the far tail of
-    the normal scores, where small differences between runs matter, and test runs are longer (48 hours against 25), so they reach
-    later stretches of operation that no training run shows. A plant would recheck the threshold on its own normal data.` : ""} ${da ? `Retraining on the validation runs as well changes little (${pct(dt.recall)} against
-    ${pct(da.recall)}), as the learning curve below predicts.` : ""}</p>`;
+  const ref = like ? like.recall : dt.recall;
+  const close = Math.abs(ref - dv.recall) < 0.02 && Math.abs(gt.macro_F1 - gv.macro_F1) < 0.02;
+  return `<p class="callout"><b>${close ? "The test confirms the validation results, but not at the same false alarm rate." : "The test differs from validation."}</b>
+    With the threshold kept from validation, detection catches ${pct(dt.recall)} of faulty rows on test against ${pct(dv.recall)} on
+    validation, but it does so at ${pct(far(dt))} false alarms instead of ${pct(far(dv))}, so those two numbers are not like for like.
+    ${like ? `Compared at the same ${pct(like.far)} false alarms on the test rows themselves, the model catches <b>${pct(like.recall)}</b>:
+    practically the validation figure, not better.` : ""} ROC-AUC, which does not depend on a threshold, is lower on test
+    (${num(dt.ROC_AUC, 3)} against ${num(dv.ROC_AUC, 3)}), probably for the same reason as the false alarm rate
+    (<a href="#far-note">below</a>): the easy first-hour normal rows are a much smaller share of the test set. Diagnosis reaches macro-F1 ${num(gt.macro_F1, 3)} against ${num(gv.macro_F1, 3)}.
+    ${da ? `Retraining on the validation runs as well changes little (${pct(dt.recall)} against ${pct(da.recall)} caught), as the
+    learning curve below predicts.` : ""}</p>`;
+}
+
+// Why the false alarm rate is higher on test: the make-up of the "normal" rows, plus the one stored fault-free run.
+function farExplain(manifest, test, trace) {
+  const mix = normalMix(manifest, test); if (!mix) return "";
+  const bd = manifest.detection.best, dt = test.detection[bd], da = test.as_validated?.detection?.[bd];
+  const far = r => 1 - r.normal_recall;
+  const laterVal = mix.valAlarms / mix.valLater;                 // if first-hour rows raise no alarms at all
+  const predicted = laterVal * (1 - mix.testShare);
+  let traceTxt = "";
+  const run = trace?.runs?.find(r => r.fault === 0);
+  if (run) {
+    const isAlarm = v => v >= 1000 * (1 - OFFICIAL_FAR);
+    const first = run.rank.slice(0, mix.on), later = run.rank.slice(mix.on);
+    const mean = a => a.reduce((x, y) => x + y, 0) / a.length / 10;
+    traceTxt = `On the one fault-free validation run whose scores are stored with this site (run ${run.run}), the best model raises
+      ${first.filter(isAlarm).length} alarms in the first ${mix.on} samples and ${later.filter(isAlarm).length} in the remaining ${later.length}
+      (${pct(later.filter(isAlarm).length / later.length)}). Ranked among all normal validation scores, its scores average percentile ${mean(first).toFixed(0)}
+      in the first hour and percentile ${mean(later).toFixed(0)} afterwards; if the start of a run were scored like the rest, both
+      would be near 50.`;
+  }
+  return `<h3 id="far-note">Why the false alarm rate is higher on test</h3>
+    <p>The threshold was set so that 5% of <i>normal validation rows</i> raise an alarm, and it was not changed for the test. On test it
+      gives ${da ? `${pct(far(da))} for the exact validated model and ` : ""}${pct(far(dt))} after retraining. The most likely reason is not
+      that the model behaves differently on new runs, but that the two sets of normal rows are made up differently:</p>
+    <div class="table-wrap"><table><thead><tr><th>Normal rows</th><th class="n">Rows</th><th class="n">From the first hour of a run</th></tr></thead><tbody>
+      <tr><td>Validation</td><td class="n">${int(mix.valNormal)}</td><td class="n">${pct(mix.valShare, 0)}</td></tr>
+      <tr><td>Test</td><td class="n">${int(mix.testNormal)}</td><td class="n">${pct(mix.testShare, 0)}</td></tr></tbody></table></div>
+    <p>In the training files every fault starts after exactly ${mix.hours} hour${mix.hours === 1 ? "" : "s"} (sample ${mix.on}), so the first ${mix.on}
+      samples of <i>every</i> training run are labelled normal, and no faulty row ever occurs that early. Runs also start from the same
+      plant state, and the rolling history windows are still filling up. <b>The model has therefore learned that the start of a run is
+      fault-free</b>, and gives those rows very low fault scores. ${traceTxt}</p>
+    <p>Almost half of the validation normal rows are such easy first-hour rows, so the 5% average hides two different rates: close to
+      0% in the first hour and, if the first hour raises no alarms at all, about ${pct(laterVal, 0)} on the rest
+      (${int(mix.valAlarms)} alarms over ${int(mix.valLater)} later rows). On test only ${pct(mix.testShare, 0)} of the normal rows come from a
+      first hour, because the fault starts after ${manifest.dataset.fault_onset?.test ? (manifest.dataset.fault_onset.test * manifest.dataset.sample_minutes) / 60 : 8} hours
+      and runs last 48 hours. The same two rates in the test mix predict roughly ${pct(predicted, 0)} false alarms; the test measured
+      ${da ? pct(far(da)) : pct(far(dt))}.</p>
+    <p class="note"><b>How sure is this?</b> It is inferred from the make-up of the data and from one stored run, not measured on every
+      run: the published results keep each model's score distribution, not the time of each score, and the models could not be
+      re-scored. The proper check, left as future work, is to report the false alarm rate separately for the first hour and for
+      the rest, and to set the threshold on fault-free rows after the first hour only.</p>
+    <p class="note"><b>What it means for the results.</b> Every model on this site gets its threshold from the same validation
+      rows, so comparisons between models stay fair. What changes is the reading of "5% false alarms": during steady operation the
+      real rate for the best model is nearer ${pct(far(dt), 0)} to ${pct(laterVal, 0)}. The test files, where faults start after 8 hours
+      instead of 1, show that <i>catching</i> faults does not depend on the fault starting at a particular time. What no file can show
+      is how the model would treat a fault that began within the first hour of a run; given the above, it would probably be slow to
+      flag it.</p>`;
 }
 
 async function renderTest(manifest) {
@@ -215,6 +283,10 @@ async function renderTest(manifest) {
   if (!test) {
     body.innerHTML = `<div class="empty" style="min-height:120px">The final test has not been run yet.<br>
       It runs once, after all models have been chosen on validation data.</div>`;
+    const b0 = bestModel(manifest, "detection"), vf = await loadModel("detection", b0.id);
+    renderConclusions(manifest, null, null);
+    renderErrors(manifest, detectionView(vf.val), b0).catch(showError);
+    renderLimits(manifest, vf);
     return;
   }
   const detIds = Object.keys(test.detection), diaIds = Object.keys(test.diagnosis);
@@ -241,13 +313,25 @@ async function renderTest(manifest) {
     <div class="table-wrap"><table><thead><tr><th>Model</th><th class="n">Macro-F1</th><th class="n">Accuracy</th></tr></thead><tbody>${
       diaIds.map(id => diaRow(label("diagnosis", id), test.diagnosis[id])).join("")}${
       Object.entries(av.diagnosis || {}).map(([id, r]) => diaRow(`${label("diagnosis", id)} <span class="note">as validated</span>`, r, true)).join("")}</tbody></table></div>
-    ${testCallout(manifest, test)}
+    <div id="test-callout">${testCallout(manifest, test, null)}</div>
+    <p class="note" id="test-once">The test files were opened once, after the best detection and diagnosis models had been fixed on
+      validation. The RBF SVM and the random-split demonstration were added after that test; neither can change which model is
+      best (the SVM is trained on a small subset and is never eligible), and no threshold or setting was changed afterwards.</p>
     <details class="learn"><summary><span class="learn-tag">Chart</span>Validation against test, fault by fault (best detection model)</summary>
-      <div class="learn-body"><div class="plot"><div id="legend-test"></div><div id="chart-test"></div></div></div></details>`;
+      <div class="learn-body"><div class="plot"><div id="legend-test"></div><div id="chart-test"></div></div></div></details>
+    <div id="far-explain"></div>`;
 
   const best = bestModel(manifest, "detection");
-  const [valFile, testFile] = await Promise.all([loadModel("detection", best.id), loadTestModel("detection", best.id)]);
+  const [valFile, testFile, trace] = await Promise.all([loadModel("detection", best.id), loadTestModel("detection", best.id),
+    getJSON(`data/detection/traces/${best.id}.json`).catch(() => null)]);
   const vv = detectionView(valFile.val), tv = detectionView(testFile.test);
+  // Like for like: the test recall at the same false alarm rate as on validation, read off the test scores themselves.
+  const like = tv.at(tv.indexForFar(OFFICIAL_FAR));
+  $("test-callout").innerHTML = testCallout(manifest, test, like);
+  $("far-explain").innerHTML = farExplain(manifest, test, trace);
+  renderConclusions(manifest, test, like);
+  renderErrors(manifest, vv, best).catch(showError);
+  renderLimits(manifest, valFile);
   const valRec = vv.perFault(vv.indexForThreshold(best.val.threshold));
   const testRec = tv.perFault(tv.indexForThreshold(best.val.threshold));
   legend($("legend-test"), [{ label: "Validation", color: COLORS.data }, { label: "Test", color: COLORS.b }]);
@@ -257,6 +341,112 @@ async function renderTest(manifest) {
     x: { domain: [0, 1], fmt: x => pct(x, 0), label: "Share of the fault's rows caught at the validation threshold" },
     labelWidth: 70, valueFmt: x => pct(x, 0),
   });
+}
+
+// ---------- Conclusions (top of the page; every number from the results) ----------
+function renderConclusions(manifest, test, like) {
+  const el = $("conclusions-body"); if (!el) return;
+  const all = manifest.detection.models.filter(m => m.selectable !== false);
+  const best = bestModel(manifest, "detection"), bestD = bestModel(manifest, "diagnosis");
+  const baseD = manifest.diagnosis.models.find(m => familyOf(m) === "baseline");
+  const top = (ms, key) => (ms.length ? ms.reduce((a, b) => (key(b) > key(a) ? b : a)) : null);
+  const rec = m => m.val.recall, inst = m => !isHist(m.features);
+  const lrI = top(all.filter(m => familyOf(m) === "logreg" && inst(m)), rec), lrH = top(all.filter(m => familyOf(m) === "logreg" && !inst(m)), rec);
+  const nlI = top(all.filter(m => !["logreg", "baseline"].includes(familyOf(m)) && !(manifest.settings.subset_families || []).includes(familyOf(m)) && inst(m)), rec);
+  const dt = test?.detection?.[best.id], gt = test?.diagnosis?.[bestD.id];
+  const items = [
+    `<b>Detection works for most faults.</b> The best model (${esc(best.label)}) catches ${pct(rec(best))} of faulty rows at 5% false
+      alarms on validation runs it never saw${like ? `, and ${pct(like.recall)} at the same false alarm rate on the separate test files` : ""}.
+      A model that ignores the sensors cannot catch anything at that false alarm rate: it can only alarm on every row or on none.`,
+    `<b>Diagnosis works too.</b> Once a fault is active, the best model names the right one of 20 with macro-F1 ${num(bestD.val.macro_F1, 3)}
+      on validation${gt ? ` and ${num(gt.macro_F1, 3)} on test` : ""}, against ${num(baseD?.val.macro_F1, 3)} for always naming the same fault.`,
+    lrI && lrH && nlI ? `<b>What the model is given matters more than which model it is.</b> Giving logistic regression the last hour of
+      each reading (rolling mean and standard deviation) lifts it from ${pct(rec(lrI))} to ${pct(rec(lrH))}. ${rec(lrH) > rec(nlI)
+        ? `That simple linear model then beats every model that only sees the current readings (best: ${esc(nlI.label)}, ${pct(rec(nlI))}).`
+        : `The best tree model on the current readings alone reaches ${pct(rec(nlI))}.`} The more complex model is still the best one
+      (${pct(rec(best))}), but by ${((rec(best) - rec(lrH)) * 100).toFixed(1)} points, not by the ${((rec(nlI) - rec(lrI)) * 100).toFixed(0)}
+      points that separate the two kinds of model without history.` : "",
+    `<b>A few faults stay out of reach.</b> <span id="concl-miss">Most of the missed rows come from a handful of faults that barely change the
+      measurements.</span> No model tried here detects them reliably. <a href="#errors">Where the model fails</a>.`,
+    `<b>What these results do not show.</b> The data is a simulation with 20 known faults that always start at a fixed time.
+      The 5% false alarm rate is measured on normal rows of which almost half come from the first hour of a run, which the model has
+      learned is always fault-free${dt ? `; on test, with the threshold unchanged, the rate is ${pct(1 - dt.normal_recall)}` : ""}.
+      Nothing here says <i>why</i> a fault happens: the models find patterns in the readings, not causes.
+      <a href="#limits">Limitations</a>.`,
+  ].filter(Boolean);
+  el.innerHTML = `<ol class="conclusions">${items.map(t => `<li>${t}</li>`).join("")}</ol>`;
+}
+
+// ---------- Where the model fails (error analysis from the stored validation scores) ----------
+async function renderErrors(manifest, vv, best) {
+  const body = $("errors-body"); if (!body) return;
+  const t = vv.indexForThreshold(best.val.threshold), rec = vv.perFault(t), tot = vv.faultTotals();
+  const rows = vv.faults.map((f, k) => ({ f, miss: tot[k] * (1 - rec[k]), rec: rec[k] })).sort((a, b) => b.miss - a.miss);
+  const all = rows.reduce((a, r) => a + r.miss, 0), top3 = rows.slice(0, 3), share3 = top3.reduce((a, r) => a + r.miss, 0) / all;
+  const list = a => (a.length > 1 ? `${a.slice(0, -1).join(", ")} and ${a[a.length - 1]}` : a[0]);
+  const weak = top3.filter(r => r.rec < 0.3), mid = top3.filter(r => r.rec >= 0.3);
+  const c = $("concl-miss");
+  if (c) c.innerHTML = `Faults ${list(top3.map(r => r.f))} account for ${pct(share3, 0)} of all the faulty rows the best model misses.`;
+  // Diagnosis: the most frequent wrong names.
+  const bestD = bestModel(manifest, "diagnosis"), df = await loadModel("diagnosis", bestD.id).catch(() => null);
+  let confTxt = "";
+  if (df?.val?.confusion_matrix) {
+    const cm = df.val.confusion_matrix, labels = df.val.labels, pairs = [];
+    cm.forEach((r, i) => { const n = r.reduce((a, b) => a + b, 0) || 1; r.forEach((v, j) => { if (i !== j) pairs.push([labels[i], labels[j], v / n]); }); });
+    pairs.sort((a, b) => b[2] - a[2]);
+    const worst = pairs.slice(0, 3);
+    const set = [...new Set(worst.flatMap(p => [p[0], p[1]]))].sort((a, b) => a - b);
+    confTxt = `<p><b>Wrong names (diagnosis).</b> The most frequent mistakes of the best diagnosis model:
+      ${worst.map(p => `fault ${p[0]} named as fault ${p[1]} in ${pct(p[2], 0)} of its rows`).join("; ")}.
+      ${set.every(f => top3.some(r => r.f === f)) ? `These are the same faults detection struggles with: they look like normal operation, and so they look like each other.` : ""}
+      Every other fault is named correctly far more often. The full table is on the <a href="${modelLink("diagnosis.html", bestD)}">Diagnosis</a> page.</p>`;
+  }
+  body.innerHTML = `
+    <p><b>Missed faults (detection).</b> At the official threshold the best model misses ${int(all)} of ${int(vv.totalF)} faulty validation
+      rows (${pct(all / vv.totalF)}). They are not spread evenly: <b>faults ${list(top3.map(r => r.f))} account for ${pct(share3, 0)} of them</b>.</p>
+    <div class="plot"><div id="chart-errors"></div></div>
+    <p>${weak.length ? `On fault${weak.length > 1 ? "s" : ""} ${list(weak.map(r => r.f))} the model flags only ${list(weak.map(r => pct(r.rec, 0)))} of the rows.
+      Since the same threshold flags 5% of normal rows on average (and <a href="#far-note">more than that after the first hour</a>), this is
+      not far above guessing.` : ""} ${mid.length ? `Fault${mid.length > 1 ? "s" : ""} ${list(mid.map(r => r.f))} ${mid.length > 1 ? "are" : "is"} in between
+      (${list(mid.map(r => pct(r.rec, 0)))} caught).` : ""} These faults change the measured variables very little
+      (<a href="index.html#explore">see the sensor traces</a>), which matches what the TEP literature reports for faults 3, 9 and 15.
+      To see a typical miss, open the <a href="${modelLink("detection.html", best)}#run">run viewer</a> and pick fault ${top3[0].f}: the score stays in the
+      normal range for most of the run.</p>
+    ${confTxt}
+    <p><b>False alarms.</b> These are not spread evenly either: the model raises almost none in the first hour of a run and more than
+      5% afterwards. See <a href="#far-note">why the false alarm rate is higher on test</a>.</p>`;
+  const show = rows.slice(0, 8);
+  barChart($("chart-errors"), {
+    categories: show.map(r => `Fault ${r.f}`),
+    series: [{ name: "miss", color: COLORS.fault, values: show.map(r => r.miss / all) }],
+    x: { domain: [0, Math.max(0.4, show[0].miss / all * 1.15)], fmt: x => pct(x, 0), label: "Share of all missed faulty rows (validation, best detection model)" },
+    labelWidth: 70, valueFmt: x => pct(x, 0),
+    tip: k => `<b>Fault ${show[k].f}</b><br>${int(show[k].miss)} missed rows (${pct(show[k].miss / all)} of all misses)<br>${pct(show[k].rec)} of this fault's rows caught`,
+  });
+}
+
+// ---------- Limitations that need a number from the results ----------
+function renderLimits(manifest, valFile) {
+  const ref = valFile?.val?.delays?.[String(OFFICIAL_FAR)]?.reference, k = manifest.settings.consecutive;
+  const op = $("lim-op");
+  if (op && ref) op.innerHTML = `<b>5% false alarms is a yardstick for comparing models, not a setting for a plant.</b> One false alarm in 20
+    samples is about one per hour. Even when ${k} alarms in a row are required, ${pct(ref[1], 0)} of the fault-free validation runs raise
+    an alarm${ref[0] != null ? `, after a median of ${fmtMinutes(ref[0])}` : ""}. A real monitor would need a much lower rate and would catch
+    fewer faults at it; the false alarm rate selector on the <a href="detection.html">Detection</a> page shows that trade-off.`;
+  const best = bestModel(manifest, "detection"), fam = manifest.families.find(f => f.key === familyOf(best)), grid = $("lim-grid");
+  if (grid && fam?.params?.length) {
+    const atEdge = fam.params.every(p => best.params?.[p.key] === p.values[p.values.length - 1]);
+    const sized = manifest.families.filter(f => f.params?.some(p => typeof p.values[0] === "number") && !(manifest.settings.subset_families || []).includes(f.key));
+    const edgeFams = sized.filter(f => {
+      const b = bestModel(manifest, "detection", f.key); return b && f.params.filter(p => typeof p.values[0] === "number").every(p => b.params?.[p.key] === p.values[p.values.length - 1]); });
+    const sib = (r) => manifest.detection.models.find(m => familyOf(m) === fam.key && !isHist(m.features) && m.params?.depth === best.params.depth && m.params?.rounds === r);
+    const rs = fam.params.find(p => p.key === "rounds")?.values, a = rs && sib(rs[rs.length - 2]), b = rs && sib(rs[rs.length - 1]);
+    if (atEdge) grid.innerHTML = `<b>"Best" means best among the settings tried.</b> The best model uses the largest values in its grid
+      (${fam.params.map(p => `${p.label.toLowerCase()} ${best.params[p.key]}`).join(", ")}), and its score was still rising${a && b ? `: without
+      history inputs, going from ${a.params.rounds} to ${b.params.rounds} rounds added ${((b.val.recall - a.val.recall) * 100).toFixed(1)} points` : ""}.
+      ${edgeFams.length > 1 ? `${edgeFams.length === sized.length ? `All ${sized.length}` : `${edgeFams.length} of the ${sized.length}`} model families with a size setting (depth, rounds, trees or components) have their best detection settings at the top of their grid.` : ""}
+      Larger models might score higher, and the gaps between families partly reflect how far each grid went.`;
+  }
 }
 
 // ---------- Which sensors matter (from the importances already stored with every model) ----------

@@ -1,5 +1,5 @@
 // "Summary" panel on every page: the main insights of that page, computed from the data so they stay correct.
-import { loadManifest, loadModel, getJSON, pct, num, int, esc, fmtMinutes, familyLabel, familyOf, isHist, detectionView, bestModel } from "./site.js";
+import { loadManifest, loadModel, loadTestModel, getJSON, pct, num, int, esc, fmtMinutes, familyLabel, familyOf, isHist, detectionView, bestModel } from "./site.js";
 
 const median = a => { const s = [...a].sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
 const ok = x => x.selectable !== false && familyOf(x) !== "baseline";
@@ -105,14 +105,25 @@ const SUMMARIES = {
   },
 
   async results(m) {
-    const c = core(m), t = m.test, av = t.as_validated || {};
-    const dt = av.detection?.[c.det.id] || t.detection[c.det.id], gt = av.diagnosis?.[c.dia.id] || t.diagnosis[c.dia.id];
-    const [e2e, lc] = await Promise.all([getJSON("data/end_to_end.json").catch(() => null), getJSON("data/learning_curve.json").catch(() => null)]);
+    const c = core(m), t = m.test;
+    const dt = t.detection[c.det.id], gt = t.diagnosis[c.dia.id];
+    const [e2e, lc, tf, vf] = await Promise.all([getJSON("data/end_to_end.json").catch(() => null), getJSON("data/learning_curve.json").catch(() => null),
+      loadTestModel("detection", c.det.id).catch(() => null), loadModel("detection", c.det.id).catch(() => null)]);
+    let like = null, miss = "";
+    if (tf?.test) { const tv = detectionView(tf.test); like = tv.at(tv.indexForFar(0.05)); }
+    if (vf?.val) {
+      const vv = detectionView(vf.val), ti = vv.indexForThreshold(c.det.val.threshold), r = vv.perFault(ti), tot = vv.faultTotals();
+      const rows = vv.faults.map((f, k) => [f, tot[k] * (1 - r[k])]).sort((a, b) => b[1] - a[1]), all = rows.reduce((a, x) => a + x[1], 0);
+      miss = `<b>Errors are concentrated:</b> faults ${rows.slice(0, 3).map(x => x[0]).join(", ")} account for ${pct(rows.slice(0, 3).reduce((a, x) => a + x[1], 0) / all, 0)} of all the faulty rows the best model misses.`;
+    }
+    const on = m.dataset.fault_onset?.train ?? 20, v = c.det.val;
+    const valFirst = (m.dataset.val_runs * on) / (v.TN + v.FP), testFirst = (t.runs_per_fault * 21 * on) / (dt.TN + dt.FP);
     const lcd = lc?.detection?.runs, shares = lcd ? Object.keys(lcd).sort((a, b) => +a - +b) : [];   // keys as written ("0.05", "1.0")
     const svm = bestModel(m, "detection", "svm");
     return [
-      `<b>The final test confirms validation:</b> on unseen test runs the best model catches ${pct(dt.recall)} of faulty readings (validation ${pct(rec(c.det))}) and diagnoses with macro-F1 ${num(gt.macro_F1, 3)} (validation ${num(f1(c.dia), 3)}).`,
-      `<b>False alarms drift:</b> the threshold set for 5% on validation gives ${pct(1 - dt.normal_recall)} on the test runs, so a real plant would recheck it on its own data.`,
+      `<b>The final test confirms validation:</b> at the same 5% false alarms the best model catches ${pct(like?.recall ?? dt.recall)} of faulty readings on unseen test runs (validation ${pct(rec(c.det))}), and it diagnoses with macro-F1 ${num(gt.macro_F1, 3)} (validation ${num(f1(c.dia), 3)}).`,
+      `<b>But the threshold does not carry over exactly:</b> kept from validation, it gives ${pct(1 - dt.normal_recall)} false alarms on test instead of 5%. The model has learned that the first hour of a run is always fault-free, and ${pct(valFirst, 0)} of the normal validation rows come from that hour against ${pct(testFirst, 0)} on test.`,
+      miss,
       e2e?.test?.single && e2e?.test?.chain ? `<b>One model or two:</b> a single model with 21 answers (macro-F1 ${num(e2e.test.single.macro_F1, 3)}) slightly beats detecting first and then diagnosing (${num(e2e.test.chain.macro_F1, 3)}).` : "",
       shares.length > 1 ? `<b>More data helps only a little:</b> with ${pct(+shares[0], 0)} of the runs, detection already reaches ${pct(lcd[shares[0]].metric)}, against ${pct(lcd[shares[shares.length - 1]].metric)} with all of them.` : "",
       svm ? `<b>Kernel methods don't scale here:</b> an RBF SVM, limited to ${int(svm.params.rows)} training rows, reaches ${pct(rec(svm))}.` : "",
@@ -123,7 +134,8 @@ const SUMMARIES = {
     return [
       `<b>One script does everything:</b> <code>tep_pipeline.py</code> trains every model, chooses thresholds and models on validation, runs the final test once and writes the website's data.`,
       `<b>Resumable:</b> finished models are skipped, so an interrupted run continues where it stopped.`,
-      `<b>Hardware:</b> the full data is comfortable with 16 GB of RAM; training every model took more than a day of computing on a desktop PC. A smaller number of runs per fault gives a quick test.`,
+      `<b>Hardware:</b> the full data needs 16 GB of RAM; training every model took more than a day of computing on a desktop PC. A smaller number of runs per fault gives a quick test.`,
+      `<b>Same split every time:</b> simulation numbers are divided 80% / 20% with a fixed seed (42), so a rerun trains and validates on the same runs.`,
       `<b>Two ways to run it:</b> on your own computer from a command prompt, or in Google Colab with the included notebook.`,
     ];
   },

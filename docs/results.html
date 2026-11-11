@@ -15,12 +15,18 @@
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
   <h1>What worked, what didn't, and why</h1>
-  <p class="lede">The final test on unseen simulation runs, the main findings from validation, and the limits of what these results can claim.</p>
+  <p class="lede">The conclusions, the final test on unseen simulation runs, the main findings from validation, where the models fail, and the limits of what these results can claim.</p>
 </div></header>
 
 <div class="layout">
 <aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
+  <section class="section" id="conclusions" data-toc="Conclusions">
+    <h2>Conclusions</h2>
+    <p class="intro">The short version. Every number is computed from the results; the sections below show the evidence.</p>
+    <div id="conclusions-body"></div>
+  </section>
+
   <section class="section" id="test" data-toc="Final test">
     <h2>Final test <span class="term">(held-out test set)</span></h2>
     <div id="test-body"></div>
@@ -31,6 +37,12 @@
     <p class="data-note" id="data-note"></p>
     <ul class="tight" id="findings-list"></ul>
     <div id="findings-more"></div>
+  </section>
+
+  <section class="section" id="errors" data-toc="Where the model fails">
+    <h2>Where the model fails <span class="term">(error analysis)</span></h2>
+    <p class="intro">An overall score hides which rows are wrong. This is where the best models' mistakes are.</p>
+    <div id="errors-body"></div>
   </section>
 
   <section class="section" id="families" data-toc="Best of each model">
@@ -78,22 +90,52 @@
 
   <section class="section" id="limits" data-toc="Limitations">
     <h2>Limitations</h2>
+    <p class="intro">What these results can and cannot claim, most important first.</p>
     <ul class="tight">
-      <li><b>Short memory.</b> Most models see the 52 variables at a single moment; the history versions add at most the last
-        hour as rolling means and standard deviations (2 hours in the window sweep, which is shown but not used to pick models). Faults that drift over hours, or change the plant's dynamics in subtler ways, remain hard to see.</li>
-      <li><b>Some faults are invisible to these variables.</b> Faults 3, 9 and 15 are widely reported as nearly undetectable in the TEP
-        literature, because they barely change the statistics of the measured data. Low scores on them are expected.</li>
-      <li><b>Detection delays can include chance alarms.</b> At a 5% false-alarm rate, three alarms in a row eventually happen on normal
-        operation too, so long delays for weakly detected faults overstate what the model can do.</li>
-      <li><b>Thresholds are chosen on validation.</b> On new data the actual false-alarm rate can drift from the 5% target. The final
-        test therefore also reports the exact validated model (trained on the training runs only), whose threshold fits it exactly.</li>
+      <li><b>The model has learned that the first hour of a run is fault-free.</b> In the training files every fault starts after
+        exactly one hour, so the first 20 samples of every run are always normal, and the models pick that up: they give the start of a
+        run very low fault scores. Almost half of the normal validation rows come from that first hour, so the 5% false alarm rate
+        is an average of nearly 0% there and well above 5% afterwards. This is why the rate rises on the test files, where the first
+        hour is a small part of normal operation. The test files, where faults start after 8 hours instead of 1, show that catching faults does not
+        depend on when the fault starts. What no file in the dataset can show is how the models would treat a fault that began
+        within the first hour; they would probably be slow to flag it.
+        <a href="#far-note">The evidence, and what is and is not certain about it</a>.</li>
+      <li id="lim-op"><b>5% false alarms is a yardstick for comparing models, not a setting for a plant.</b> One false alarm in 20
+        samples is about one per hour. A real monitor would need a much lower rate and would catch fewer faults at it; the false alarm
+        rate selector on the <a href="detection.html">Detection</a> page shows that trade-off.</li>
+      <li><b>Thresholds are chosen on validation and reported on validation.</b> The 5% is exact there by construction. The honest
+        check is the final test, where the threshold is kept: the false alarm rate is higher (see the first point), and at an equal
+        false alarm rate the share of faults caught is the same as on validation.</li>
+      <li><b>Only the 20 known faults.</b> Diagnosis always answers with one of the 20 fault types it was trained on. It cannot say
+        "something new", and detection was only ever tested on those same 20 types, so nothing here shows how a new kind of fault
+        would be handled.</li>
+      <li><b>Some faults are invisible to these variables.</b> Faults 9 and 15 (and partly 3) barely change the measured data, as the
+        TEP literature also reports. Most missed rows come from them (<a href="#errors">where the model fails</a>), and low scores on them
+        are expected rather than fixable by tuning.</li>
+      <li id="lim-grid"><b>"Best" means best among the settings tried.</b> The best model uses the largest tree depth and number of
+        rounds in its grid, so larger models might score higher, and the gaps between families partly reflect how far each grid went.</li>
+      <li><b>Each model was trained once.</b> The 95% intervals come from resampling the validation runs, so they describe how much a
+        score depends on which runs were held out. They do not cover what would change with a different random seed or a
+        different split of the runs, so small gaps between models (a point or less) should not be read as real differences.</li>
+      <li><b>Faulty rows are 91% of the data.</b> In a real plant faults are rare. Precision and F1 depend on that share and would be
+        much lower in practice; recall and the false alarm rate do not depend on it, which is why they are the headline numbers.</li>
+      <li><b>Labels follow the clock, not the plant.</b> A row is labelled faulty from the moment the fault is switched on, even
+        while the measurements have not yet moved. Some "missed" rows right after the start of a fault are rows no model could flag.</li>
+      <li><b>Short memory.</b> The best models see each reading now plus its mean and standard deviation over the last hour (2 hours
+        in the window sweep, which is shown but not used to pick models). Faults that drift over many hours, or change the plant's
+        dynamics in subtler ways, remain hard to see.</li>
       <li><b>History windows warm up.</b> At the start of every run a rolling window holds fewer samples than its length. In training
         and validation the fault starts after 1 hour, so windows longer than that are never full when a fault begins; they are shown
         but not used to choose the best model.</li>
-      <li><b>Random forests and AdaBoost see a sample.</b> Each forest tree and each AdaBoost model trains on a random 25% of the
-        training rows to keep training time practical; every other model uses every row. <a href="#data">How much data is enough</a> shows how
-        much the amount of training data matters.</li>
-      <li><b>Simulation only.</b> Conclusions are limited to the TEP benchmark and may not carry over to a real plant.</li>
+      <li><b>Detection delays can include chance alarms.</b> At a 5% false alarm rate, three alarms in a row eventually happen on normal
+        operation too, so long delays for weakly detected faults overstate what the model can do.</li>
+      <li><b>Random forests, AdaBoost and the SVM see a sample.</b> Each forest tree and each AdaBoost model trains on a random 25% of the
+        training rows, and the RBF SVM on at most 20,000 rows, to keep training time practical; every other model uses every row.
+        <a href="#data">How much data is enough</a> shows how much the amount of training data matters.</li>
+      <li><b>Prediction, not explanation.</b> The models find patterns that go with a fault. <a href="#sensors">Which sensors matter</a>
+        shows what a model uses, not what causes the fault or what an operator should change.</li>
+      <li><b>Simulation only.</b> Conclusions are limited to the TEP benchmark: one plant, one operating mode, exact fault start times and
+        sensors that never fail. They may not carry over to a real plant.</li>
     </ul>
   </section>
 

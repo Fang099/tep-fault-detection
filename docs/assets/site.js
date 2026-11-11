@@ -147,6 +147,9 @@ export function renderChrome() {
       <a class="brand" href="index.html">${MARK}<span>TEP fault monitor</span></a>
       <div class="navlinks">${PAGES.map(p => `<a href="${p.href}"${p.key === page ? ' class="active" aria-current="page"' : ""}>${p.label}</a>`).join("")}</div>
       <button class="theme-toggle" type="button"></button></div>`;
+    // On narrow screens the links scroll sideways: start with the current page in view.
+    const links = nav.querySelector(".navlinks"), active = links.querySelector("a.active");
+    if (active) links.scrollLeft = active.offsetLeft - links.offsetLeft - (links.clientWidth - active.offsetWidth) / 2;
     const btn = nav.querySelector(".theme-toggle");
     themeButton(btn);
     btn.addEventListener("click", () => {

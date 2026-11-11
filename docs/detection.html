@@ -15,7 +15,8 @@
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
   <h1>Is a fault happening right now?</h1>
-  <p class="lede">Each model reads one 3-minute snapshot of the 52 process variables and outputs a fault score.
+  <p class="lede">Every 3 minutes, each model reads the 52 process variables (the history models also see how each one behaved over the
+    last hour or less) and outputs a fault score.
     An alarm goes off when the score passes a threshold. Pick a model, move the threshold, and see what it catches and what it misses.</p>
 </div></header>
 
@@ -160,7 +161,7 @@
   <section class="section" id="faults" data-toc="Fault by fault">
     <h2>Fault by fault <span class="term">(recall per fault)</span></h2>
     <p class="intro">Share of each fault's rows caught at the current threshold. Some faults barely change the measurements and are
-      nearly impossible to see in a single snapshot. Click a fault for details.</p>
+      hard to see for every model, with or without history. Click a fault for details.</p>
     <div class="split">
       <div class="plot"><div id="chart-faults"></div></div>
       <div class="panel" id="fault-panel"></div>
@@ -187,7 +188,8 @@
       <summary><span class="learn-tag">Learn</span>What the history inputs add</summary>
       <div class="learn-body">
         <p>A single 3-minute snapshot can't show a slow drift or a sensor that has started to fluctuate more. History inputs give the
-          model the last <i>W</i> samples of each reading (by default <i>W</i> = 10, i.e. 30 minutes), summarized as a mean and a standard deviation:</p>
+          model the last <i>W</i> samples of each reading, summarized as a mean and a standard deviation. <i>W</i> is set with the
+          History window slider at the top of the page (for example <i>W</i> = 20 is one hour):</p>
         <div class="formula" id="f-history"></div>
         <p>Only samples up to the current time <i>t</i> are used, and only from the same run, so a prediction never uses information
           that wouldn't be available at that moment. The mean smooths out noise; the standard deviation reacts when a sensor becomes

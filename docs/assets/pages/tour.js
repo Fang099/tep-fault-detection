@@ -1,6 +1,6 @@
 // Guided tour: the whole project in nine short steps, each with one small interactive piece built from the real results.
 import {
-  renderChrome, showError, loadManifest, loadModel, getJSON, pct, num, int, esc, fmtMinutes, COLORS,
+  renderChrome, showError, loadManifest, loadModel, loadTestModel, getJSON, pct, num, int, esc, fmtMinutes, COLORS,
   familyLabel, familyOf, isHist, detectionView, logit, VARIABLES, windowShort, windowOf,
 } from "../site.js";
 import { lineChart, barChart, legend } from "../charts.js";
@@ -284,9 +284,11 @@ const STEPS = [
     text: () => `<p>All choices were made on the validation runs. Only then were the chosen models run, once, on a separate test set:
       ${int(D.manifest.test.rows)} readings from longer runs they had never seen. Switch between the two.</p>`,
     draw(el) {
-      const t = D.manifest.test, av = t.as_validated || {}, bd = D.manifest.detection.best, bg = D.manifest.diagnosis.best;
-      const dt = av.detection?.[bd] || t.detection[bd], gt = av.diagnosis?.[bg] || t.diagnosis[bg];
-      const e = D.e2e, ev = e?.val?.single, et = e?.test?.single_as_validated || e?.test?.single;
+      const t = D.manifest.test, bd = D.manifest.detection.best, bg = D.manifest.diagnosis.best;
+      const dt = t.detection[bd], gt = t.diagnosis[bg];
+      const e = D.e2e, ev = e?.val?.single, et = e?.test?.single;
+      const d = D.manifest.dataset, on = d.fault_onset?.train ?? 20, v = D.det.val;
+      const valFirst = (d.val_runs * on) / (v.TN + v.FP), testFirst = (t.runs_per_fault * 21 * on) / (dt.TN + dt.FP);
       const rows = [
         ["Faulty readings caught", D.det.val.recall, dt.recall, pct],
         ["False alarms (same threshold)", 1 - D.det.val.normal_recall, 1 - dt.normal_recall, pct],
@@ -298,10 +300,13 @@ const STEPS = [
       const draw = which => {
         $("t8-tiles").innerHTML = tiles(rows.map(([l, a, b, f]) => [f(which === "val" ? a : b), l, which === "test" && Math.abs(b - a) > 0.015 ? "hl" : ""]));
         $("t8-out").innerHTML = which === "val" ? "These are the numbers the models were chosen on."
-          : `The scores hold up, even slightly better. The threshold was <b>not</b> re-tuned on the test set: it is the one chosen on
-             validation, kept exactly as it was. On the new runs, ${pct(1 - dt.normal_recall)} of normal readings land above it instead of 5%,
-             because new data never looks exactly like the data a threshold was set on. So a real plant would recheck the threshold on its
-             own normal operation.`;
+          : `The threshold was <b>not</b> re-tuned on the test set: it is the one chosen on validation, kept exactly as it was. With it the
+             model flags a little more of everything: more faulty readings, but also ${pct(1 - dt.normal_recall)} of normal readings instead of 5%.
+             ${D.like ? `Compared fairly, at the same 5% false alarms, it catches <b>${pct(D.like.recall)}</b> on test: the same as on validation, not better.` : ""}
+             <br><br><b>Why more false alarms?</b> In the training data every fault starts after exactly one hour, so the model has learned
+             that the first hour of a run is always fault-free and almost never raises an alarm there. ${pct(valFirst, 0)} of the normal
+             validation readings come from that easy first hour, but only ${pct(testFirst, 0)} of the normal test readings, where runs are
+             longer and faults start after 8 hours. <a href="results.html#far-note">The full explanation</a>.`;
       };
       onSeg("t8-which", draw);
       draw("val");
@@ -313,13 +318,13 @@ const STEPS = [
     text: () => `<p>Five takeaways. Each links to the page with the full story.</p>`,
     draw(el) {
       const lr = D.families.find(f => f.key === "logreg"), top = D.bestHist, hard = D.hardFaults;
-      const t = D.manifest.test, av = t.as_validated?.detection?.[D.manifest.detection.best];
+      const td = D.manifest.test.detection[D.manifest.detection.best];
       const cards = [
         ["History helps most", `Adding the last hour of each sensor lifts detection from ${pct(D.bestInst.val.recall)} to ${pct(top.val.recall)}.`, "detection.html#window"],
         ["Flexible models win", `${esc(top.label.split(",")[0])} beats logistic regression (${pct(lr?.hist?.val.recall ?? lr?.inst?.val.recall)}): faults hide in combinations of sensors.`, "compare.html"],
         ["Some faults are nearly invisible", `Faults ${hard.join(", ")} barely change the readings, so they are the hardest to name or catch.`, "diagnosis.html"],
         ["Test fairly", "Splitting by run, not by row, keeps the score honest; a random split overstates it.", "index.html#protocol"],
-        ["It holds up", `On the unseen test runs it catches ${pct(av?.recall ?? t.detection[D.manifest.detection.best].recall)} of faulty readings; only the false-alarm rate needs rechecking.`, "results.html"],
+        ["It holds up, with one catch", `On the unseen test runs it catches ${pct(D.like?.recall ?? td.recall)} of faulty readings at the same 5% false alarms. With the validation threshold kept, false alarms rise to ${pct(1 - td.normal_recall)}: the model treats the first hour of a run as always fault-free.`, "results.html#far-note"],
       ];
       el.innerHTML = `<div class="tour-cards">${cards.map(([h, p, href], i) => `<a class="tour-card" href="${href}"><span class="tour-q-n">${i + 1}</span><b>${h}</b><span>${p}</span></a>`).join("")}</div>
         <div class="tour-row" style="margin-top:18px"><a class="btn primary" href="index.html">Go to the overview</a><a class="btn" href="detection.html">Explore the models</a>
@@ -365,10 +370,13 @@ async function load() {
   const m = await loadManifest();
   D.manifest = m;
   const det = m.detection.models.find(x => x.id === m.detection.best), dia = m.diagnosis.models.find(x => x.id === m.diagnosis.best);
-  const [detFile, diaFile, traces, summary, split, e2e] = await Promise.all([
+  const [detFile, diaFile, traces, summary, split, e2e, testFile] = await Promise.all([
     loadModel("detection", det.id), loadModel("diagnosis", dia.id), getJSON("data/data_traces.json"), getJSON("data/data_summary.json"),
-    getJSON("data/split_demo.json").catch(() => null), getJSON("data/end_to_end.json").catch(() => null)]);
+    getJSON("data/split_demo.json").catch(() => null), getJSON("data/end_to_end.json").catch(() => null),
+    m.test ? loadTestModel("detection", det.id).catch(() => null) : null]);
   Object.assign(D, { detFile, diaFile, traces, split, e2e, quality: summary.quality });
+  // Like for like: what the retrained model catches on test at the same 5% false alarms as on validation.
+  if (testFile?.test) { const tv = detectionView(testFile.test); D.like = tv.at(tv.indexForFar(0.05)); }
   D.det = { ...det, delays: detFile.val.delays["0.05"] || Object.values(detFile.val.delays)[0] };
   D.dia = dia;
   D.detView = detectionView(detFile.val);

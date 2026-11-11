@@ -182,6 +182,10 @@ function coarseNote(v, r) {
       (a deep tree gives many rows a score of almost exactly 1), so any alarm at all would exceed ${pct(state.farTarget, 0)} false alarms.
       This is why the deepest trees score 0% here even though their ROC-AUC is reasonable; a forest averages many trees and avoids it.`;
   }
+  if (state.farTarget && r.far > 0 && state.farTarget - r.far > 0.002 && v.B >= 40)
+    return ` <b>Why ${pct(r.far)} and not exactly ${pct(state.farTarget, 0)}?</b> Many rows share exactly the same score at this point, so no threshold
+      lands on ${pct(state.farTarget, 0)}; the nearest one that stays under the limit is used. This makes the model look slightly worse than it would
+      at exactly ${pct(state.farTarget, 0)}.`;
   if (v.B < 40) return ` <b>This model gives only ${v.B} different scores</b> (a tree has one score per leaf), so the threshold can only move in big steps.`;
   return "";
 }
@@ -280,14 +284,19 @@ function renderHistoryLive() {
   }
   const row = (name, m) => `<tr class="${m.id === model.id ? "highlight" : ""}"><td>${name}</td><td><a href="${modelLink("detection.html", m)}">${esc(m.label)}</a></td>
     <td class="n">${pct(m.val.recall)}</td><td class="n">${num(m.val.ROC_AUC, 3)}</td></tr>`;
-  const gain = hist.val.recall - inst.val.recall;
+  // The selected model if it uses history, otherwise the family's best history model among the windows validation can judge.
+  const histAll = models.filter(m => isHist(m.features) && m.selectable !== false).sort((a, b) => b.val.recall - a.val.recall);
+  const shown = isHist(model.features) ? model : (histAll[0] || hist);
+  const rows = [["Current readings only (52)", inst], ...(hist.id !== shown.id ? [["With 30-min history (156)", hist]] : []),
+                [`With ${windowText(windowOf(shown.features))} history (156)`, shown]];
+  const gain = shown.val.recall - inst.val.recall;
   el.innerHTML = `<p>Best ${esc(lowerLabel(familyLabel(manifest, fam)))} with and without history, at 5% false alarms:</p>
     <div class="table-wrap"><table><thead><tr><th>Inputs</th><th>Best settings</th><th class="n">Faults caught</th><th class="n">ROC-AUC</th></tr></thead>
-    <tbody>${row("Instantaneous (52)", inst)}${row("With 30-min history (156)", hist)}${isHist(model.features) && model.features !== "hist" && familyOf(model) === fam
-      ? row(`With ${windowText(windowOf(model.features))} history (156)`, model) : ""}</tbody></table></div>
-    <p style="margin-top:10px">History ${gain >= 0 ? `adds <b>${(100 * gain).toFixed(1)} percentage points</b>` : `costs <b>${(-100 * gain).toFixed(1)} percentage points</b>`}
-      of faults caught for this model. Compare the fault-by-fault and detection-speed charts with the inputs switch to see which faults gain,
-      and see <a href="#window">How much history helps</a> for other window lengths.</p>`;
+    <tbody>${rows.map(([n, m]) => row(n, m)).join("")}</tbody></table></div>
+    <p style="margin-top:10px">A ${windowText(windowOf(shown.features))} history ${gain >= 0 ? `adds <b>${(100 * gain).toFixed(1)} percentage points</b>` : `costs <b>${(-100 * gain).toFixed(1)} percentage points</b>`}
+      of faults caught compared with the current readings alone. Move the History window slider at the top of the page between
+      "none" and a window, and watch the fault-by-fault and detection-speed charts to see which faults gain;
+      <a href="#window">How much history helps</a> shows every window length.</p>`;
 }
 
 // ---------- Learn: class weighting ----------
@@ -437,7 +446,8 @@ function renderScores() {
   const sureF = stat || margin ? 0 : sure(faultCounts, v.totalF), sureN = stat || margin ? 0 : sure(v.normal, v.totalN);
   $("callout-scores").innerHTML = `<b>The overlap is the problem.</b> Normal rows to the right of the line are false alarms
     (${pct(r.far)} of normal rows); faulty rows to the left are missed (${pct(1 - r.recall)} of faulty rows).
-    Many faulty rows score just like normal ones, because a single snapshot of a slowly developing fault can look normal.
+    Many faulty rows score just like normal ones: some faults barely move the readings, and a fault that develops slowly looks
+    normal at first.
     ${sureF >= 0.05 ? `<br><b>The peak at the far right is real:</b> ${pct(sureF)} of faulty rows score 0.9999 or more (against ${pct(sureN, 2)}
       of normal rows). These are rows of faults that change the plant unmistakably, which the model is certain about. Because the axis
       is spaced by log-odds, 0.99, 0.9999 and 0.999999 are equally far apart, so that certainty gets room of its own; rows in between

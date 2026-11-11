@@ -1,7 +1,10 @@
-numpy
-pandas
-pyarrow
-scipy
-scikit-learn
-joblib
-xgboost
+# Minimum versions the pipeline needs. The exact versions used for the published
+# results were not recorded; newer versions work (the script adapts to scikit-learn's
+# newer LogisticRegression options) but can change scores in the last decimals.
+numpy>=1.24
+pandas>=2.0
+pyarrow>=12
+scipy>=1.10
+scikit-learn>=1.2
+joblib>=1.2
+xgboost>=1.7
