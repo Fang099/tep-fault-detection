@@ -62,20 +62,26 @@ One row is one 3-minute time step of one simulation run. The models use only the
 
 ## Reproducing the results
 
-**Google Colab:** open `run_colab.ipynb` from this repo in Colab (File → Open notebook → GitHub), set
-`DATA_DIR` to the Drive folder holding the CSVs, and run the cells in order.
-
-**Any computer** (recommended for the full dataset, which needs 16 GB of RAM):
+**Any computer** (needed for the full dataset, which takes more memory than a free Colab session provides).
+With the default options, these two commands reproduce everything on the website:
 
 ```bash
 pip install -r requirements.txt
-python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100      # subset, faster
-python tep_pipeline.py --data-dir path/to/csvs --families tree,rf          # only some model families
-python tep_pipeline.py --data-dir path/to/csvs --history-families ""     # no history inputs
-python tep_pipeline.py --data-dir path/to/csvs --hist-windows ""         # skip the history window sweep
-python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0        # all 500 runs per fault
-python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 0 --final-test
+python tep_pipeline.py --data-dir path/to/csvs                # 1. train and validate every model on all the data
+python tep_pipeline.py --data-dir path/to/csvs --final-test   # 2. once, at the end: retrain the chosen models, score test
 ```
+
+Training every model on all the data took more than a day on a desktop PC. For a quicker check:
+
+```bash
+python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100      # 100 runs per fault instead of 500
+python tep_pipeline.py --data-dir path/to/csvs --families logreg,xgb     # only some model families
+python tep_pipeline.py --data-dir path/to/csvs --hist-windows ""         # skip the history window sweep
+```
+
+**Google Colab:** open `run_colab.ipynb` from this repo in Colab (File → Open notebook → GitHub), set
+`DATA_DIR` to the Drive folder holding the CSVs, and run the cells in order. It starts with 100 runs per fault,
+which fits in a free session.
 
 Run `python tep_pipeline.py --help` for all options. Results go to `outputs_<N>runs/` (or `outputs_full/`)
 inside the data folder: trained models in `models_v3/`, website data in `web_data/`. Finished models are skipped
@@ -109,7 +115,6 @@ The full list is on the website's Results page. The most important ones:
 | `docs/` | Project website (GitHub Pages): plain HTML, CSS and JavaScript |
 | `docs/data/` | Exported results the website reads (copied from `web_data/`) |
 | `requirements.txt` | Python packages the pipeline needs |
-| `LICENSE` | MIT licence for the code in this repository (not for the dataset) |
 
 To preview the website locally: `cd docs && python -m http.server`, then open http://localhost:8000.
 
@@ -159,6 +164,8 @@ website ([AI use and contributions](https://fang099.github.io/tep-fault-detectio
   [afrniomelo/tep-csv](https://www.kaggle.com/datasets/afrniomelo/tep-csv).
 - Chiang, L. H., Russell, E. L. and Braatz, R. D. (2001). *Fault Detection and Diagnosis in Industrial Systems*.
   Springer.
+- Jackson, J. E. and Mudholkar, G. S. (1979). Control procedures for residuals associated with principal component
+  analysis. *Technometrics*, 21(3), 341–349. (The SPE limit used by PCA monitoring.)
 
 **Software** (used as libraries; no outside code was copied into this repository)
 

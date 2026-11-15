@@ -134,8 +134,9 @@ const SUMMARIES = {
     return [
       `<b>One script does everything:</b> <code>tep_pipeline.py</code> trains every model, chooses thresholds and models on validation, runs the final test once and writes the website's data.`,
       `<b>Resumable:</b> finished models are skipped, so an interrupted run continues where it stopped.`,
-      `<b>Hardware:</b> the full data needs 16 GB of RAM; training every model took more than a day of computing on a desktop PC. A smaller number of runs per fault gives a quick test.`,
+      `<b>Hardware:</b> the full data needs more memory than free Colab provides, and training every model took more than a day on a desktop PC. A smaller number of runs per fault gives a quick test.`,
       `<b>Same split every time:</b> simulation numbers are divided 80% / 20% with a fixed seed (42), so a rerun trains and validates on the same runs.`,
+      `<b>Two commands:</b> with the default options, one command trains and validates everything and a second runs the final test once.`,
       `<b>Two ways to run it:</b> on your own computer from a command prompt, or in Google Colab with the included notebook.`,
     ];
   },

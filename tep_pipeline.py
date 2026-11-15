@@ -48,10 +48,10 @@ false-alarm rates plus a chance reference from fault-free runs, run-level bootst
 (probability models) and score traces for one validation run per fault (run viewer). Results exported by an
 older version are re-exported from the saved models without retraining.
 
-Usage
-  python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 100
-  python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 100 --families tree,rf
-  python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 0 --final-test   # all runs + test
+Usage (the defaults reproduce the published results)
+  python tep_pipeline.py --data-dir /path/to/csvs                  # train and validate every model on all the data
+  python tep_pipeline.py --data-dir /path/to/csvs --final-test     # then, once: retrain the chosen models, score test
+  python tep_pipeline.py --data-dir /path/to/csvs --runs-per-fault 100   # quicker, smaller run (100 runs per fault)
 Every model trains on every time step by default (--det-stride / --diag-stride 1); the final test uses all test runs.
 
 Results are written to <out-dir>/outputs_<N>runs (or outputs_full): models_v3/ and web_data/ (website files).
@@ -100,11 +100,12 @@ parser.add_argument("--data-dir", default="dataset",
 parser.add_argument("--work-dir", default=None,
                     help="optional fast local folder to copy the Parquet cache into (e.g. /content/dataset on Colab)")
 parser.add_argument("--out-dir", default=None, help="where results go (default: --data-dir)")
-parser.add_argument("--runs-per-fault", type=int, default=100,
-                    help="use the first N runs of each fault type for train/val; 0 = all 500")
+parser.add_argument("--runs-per-fault", type=int, default=0,
+                    help="use the first N runs of each fault type for train/val; 0 = all 500 (as published); "
+                         "e.g. 100 for a quicker, smaller run")
 parser.add_argument("--families", default=",".join(ALL_FAMILIES),
                     help=f"comma-separated model families to train (default: all of {','.join(ALL_FAMILIES)})")
-parser.add_argument("--history-families", default="logreg,pcamon,rf,xgb",
+parser.add_argument("--history-families", default="logreg,pcamon,rf,xgb,svm",
                     help="families also trained with 30-minute rolling mean/std inputs (empty string = none)")
 parser.add_argument("--det-stride", type=int, default=1, help="detection trains on every k-th time step (1 = all)")
 parser.add_argument("--diag-stride", type=int, default=1, help="diagnosis trains on every k-th time step (1 = all)")
@@ -123,7 +124,7 @@ parser.add_argument("--hist-windows", default="2,5,20,40",
 parser.add_argument("--svm-rows", default="5000,20000",
                     help="training-subset sizes for the RBF SVM (random rows, nested); its cost grows with the square of this")
 parser.add_argument("--svm-c", default="1,10", help="values of C (margin softness) for the RBF SVM")
-parser.add_argument("--split-demo", default="0",
+parser.add_argument("--split-demo", default="1",
                     help="1 = also measure what a random row split would report (logistic regression and a deep tree, "
                          "trained both ways on the same number of rows); written to split_demo.json")
 parser.add_argument("--final-test", action="store_true", help="retrain the chosen models and evaluate on test")
