@@ -81,6 +81,11 @@ Run `python tep_pipeline.py --help` for all options. Results go to `outputs_<N>r
 inside the data folder: trained models in `models_v3/`, website data in `web_data/`. Finished models are skipped
 on re-runs, so an interrupted run can be restarted.
 
+**Rebuilding the website from a new run:** copy the contents of `web_data/` into `docs/data/` (replacing what is
+there), then preview locally with `cd docs && python -m http.server` and open http://localhost:8000. Pushing
+`docs/` to the `main` branch publishes it on GitHub Pages (Settings → Pages → branch `main`, folder `/docs`).
+The site is plain HTML, CSS and JavaScript with no build step.
+
 ## Known limitations
 
 The full list is on the website's Results page. The most important ones:
@@ -107,3 +112,59 @@ The full list is on the website's Results page. The most important ones:
 | `LICENSE` | MIT licence for the code in this repository (not for the dataset) |
 
 To preview the website locally: `cd docs && python -m http.server`, then open http://localhost:8000.
+
+## AI use and contributions
+
+This project was built with the help of Claude, an AI assistant by Anthropic. The same statement is on the
+website ([AI use and contributions](https://fang099.github.io/tep-fault-detection/index.html#ai-use)).
+
+**What I did**
+
+- Chose the dataset (Tennessee Eastman Process, Rieth et al. 2017) and the research question: detecting and
+  diagnosing faults in a simulated chemical plant.
+- Explored the data and tried simple ML models on my own first, to understand the data and the problem before
+  bringing in AI.
+- Worked out that the data has to be split by simulation run, not by row.
+- Decided which model families to compare and which experiments to run, among them training on all the data, the
+  learning curve on both axes, the single 21-label model as an alternative to the two-stage chain, PCA monitoring
+  with history inputs, the RBF SVM on a subset, the random-split demonstration and which sensors matter.
+- Ran all training, validation and the final test on my own and the lab's computers, and handled the practical
+  problems along the way (memory limits, interrupted runs, choosing which slow models to skip).
+- Reviewed the code and the explanations, asked for corrections where something was unclear or wrong, and tested
+  the website page by page.
+
+**What Claude did**
+
+- Wrote most of the code: the training and evaluation pipeline (`tep_pipeline.py`) and the website.
+- Designed most of the website's layout.
+- Wrote most of the explanatory text on the site and the documentation of the pipeline.
+- Proposed parts of the method that I then accepted, such as choosing thresholds at a fixed 5% false alarm rate on
+  validation only, and bootstrap intervals over runs.
+- Reviewed the code for bugs before the full training run.
+
+**What AI did not do**
+
+- Every number on the site was computed by the pipeline from the dataset, on runs I carried out. No result was
+  written or estimated by the AI.
+- The test files were used once, after all choices were made on validation.
+
+## References
+
+**Data and background**
+
+- Downs, J. J. and Vogel, E. F. (1993). A plant-wide industrial process control problem. *Computers & Chemical
+  Engineering*, 17(3), 245–255.
+- Rieth, C. A., Amsel, B. D., Tran, R. and Cook, M. B. (2017). Additional Tennessee Eastman Process simulation data
+  for anomaly detection evaluation. Harvard Dataverse. Distributed as CSV on Kaggle:
+  [afrniomelo/tep-csv](https://www.kaggle.com/datasets/afrniomelo/tep-csv).
+- Chiang, L. H., Russell, E. L. and Braatz, R. D. (2001). *Fault Detection and Diagnosis in Industrial Systems*.
+  Springer.
+
+**Software** (used as libraries; no outside code was copied into this repository)
+
+- Pedregosa, F. et al. (2011). Scikit-learn: Machine learning in Python. *Journal of Machine Learning Research*, 12,
+  2825–2830.
+- Chen, T. and Guestrin, C. (2016). XGBoost: A scalable tree boosting system. *Proceedings of KDD 2016*, 785–794.
+- NumPy (Harris et al., 2020, *Nature* 585, 357–362), pandas, SciPy and joblib.
+- The website uses no JavaScript libraries; its charts are drawn by its own code. Fonts: IBM Plex Sans and
+  IBM Plex Mono (SIL Open Font License), loaded from Google Fonts.
