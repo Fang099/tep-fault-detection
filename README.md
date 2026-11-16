@@ -106,12 +106,34 @@ The full list is on the website's Results page. The most important ones:
   would be handled.
 - Package versions of the published run were not recorded; `requirements.txt` gives minimum versions.
 
+## Results and the exact split
+
+Every number on the website comes from the files in `docs/data/` (JSON, written by the pipeline). The same
+results as readable tables, made from those files by `python scripts/make_tables.py`:
+
+| File | Contents |
+|---|---|
+| `results/detection_validation.csv` | All 238 detection models: settings, threshold, recall at 5% false alarms, ROC-AUC, PR-AUC, 95% interval, confusion counts |
+| `results/diagnosis_validation.csv` | All 178 diagnosis models: settings, macro-F1, accuracy, 95% interval |
+| `results/final_test.csv` | The best models on the test files: as validated and retrained, plus a like-for-like row at 5% false alarms |
+| `results/per_fault.csv` | Each fault: detection recall (validation and test) and diagnosis recall, with its most common wrong name |
+| `results/end_to_end.csv` | Detection and diagnosis together (21 answers): the two-model chain and one 21-label model |
+| `results/learning_curve.csv` | The best models retrained on fewer runs and on sparser samples |
+| `results/split_demo.csv` | Extra experiment: validating on unseen runs vs on random rows |
+| `splits/train_simulation_runs.txt`, `splits/validation_simulation_runs.txt` | The exact split: the 400 training and 100 validation simulation numbers (each covers the fault-free run and all 20 faulty runs with that number) |
+
+`eligible_for_best = False` marks models shown for comparison but never allowed to be chosen (history windows longer
+than one hour, and the RBF SVM trained on a subset).
+
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `tep_pipeline.py` | Data loading, training, evaluation and website export |
+| `tep_pipeline.py` | Data loading, labels, split, preprocessing, training, evaluation, final test and website export |
 | `run_colab.ipynb` | Short notebook that runs the pipeline on Colab |
+| `scripts/make_tables.py` | Writes `results/` and `splits/` from the published results (no data or training needed) |
+| `results/`, `splits/` | Readable results tables and the exact train/validation split (see above) |
+| `exploration/` | My first exploration notebook, kept as it was, with a note on what changed afterwards |
 | `docs/` | Project website (GitHub Pages): plain HTML, CSS and JavaScript |
 | `docs/data/` | Exported results the website reads (copied from `web_data/`) |
 | `requirements.txt` | Python packages the pipeline needs |

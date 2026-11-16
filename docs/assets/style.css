@@ -471,3 +471,9 @@ ol.conclusions li { margin: 9px 0; }
               mask-image: linear-gradient(to right, #000 calc(100% - 30px), transparent); }
 }
 @media (max-width: 700px) { .btn.small { padding: 7px 12px; } }
+
+/* Links from a section to its code and result files in the repository */
+.code-link { margin: 14px 0 0; font-size: 13.5px; color: var(--muted); line-height: 1.7; }
+.code-link span { font-weight: 600; margin-right: 4px; }
+.code-link code { font-size: 12.5px; }
+.tour-small { display: block; margin-top: 6px; font-size: 14px; color: var(--muted); }

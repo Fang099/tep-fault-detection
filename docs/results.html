@@ -30,6 +30,7 @@
   <section class="section" id="test" data-toc="Final test">
     <h2>Final test <span class="term">(held-out test set)</span></h2>
     <div id="test-body"></div>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L1806">the final test</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/main/results/final_test.csv"><code>results/final_test.csv</code></a></p>
   </section>
 
   <section class="section" id="findings" data-toc="Findings">
@@ -43,6 +44,7 @@
     <h2>Where the model fails <span class="term">(error analysis)</span></h2>
     <p class="intro">An overall score hides which rows are wrong. This is where the best models' mistakes are.</p>
     <div id="errors-body"></div>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/main/results/per_fault.csv"><code>results/per_fault.csv</code></a> (every fault, detection and diagnosis)</p>
   </section>
 
   <section class="section" id="families" data-toc="Best of each model">
@@ -53,6 +55,7 @@
     <p class="note" id="fam-status" style="margin:4px 0 10px"></p>
     <div class="plot"><div id="legend-families"></div><div id="chart-families"></div></div>
     <div class="table-wrap" style="margin-top:14px"><table id="families-table"></table></div>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/main/results/detection_validation.csv"><code>results/detection_validation.csv</code></a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/main/results/diagnosis_validation.csv"><code>results/diagnosis_validation.csv</code></a> (every model, every setting)</p>
   </section>
 
   <section class="section" id="sensors" data-toc="Which sensors matter">
@@ -77,6 +80,7 @@
         fault. Its plain "most likely answer", with no false alarm control, is shown too.</li>
     </ul>
     <div id="e2e-body"></div>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L1544">end-to-end evaluation</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/main/results/end_to_end.csv"><code>results/end_to_end.csv</code></a></p>
   </section>
 
   <section class="section" id="data" data-toc="How much data">
@@ -85,6 +89,7 @@
       validation runs. Two different kinds of "less": fewer simulation runs (each run is a new random disturbance pattern) and sparser
       sampling inside the same runs (neighbouring samples are only 3 minutes apart).</p>
     <div id="data-body"></div>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L1461">learning curve</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/main/results/learning_curve.csv"><code>results/learning_curve.csv</code></a></p>
   </section>
 
 

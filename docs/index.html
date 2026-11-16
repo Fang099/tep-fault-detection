@@ -177,6 +177,7 @@
         fixed time and never combined. There are no sensor failures, no missing values and no faults other than those 20, so none of
         these can be studied here. No personal or confidential data is involved.</li>
     </ul>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L220">loading the data</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L314">quality checks</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/main/exploration/early_trial.ipynb"><code>my first exploration notebook</code></a></p>
   </section>
 
 
@@ -230,6 +231,7 @@
       already scores an F1 of about 0.96. That's why this site reports false alarms and recall on normal operation alongside the usual metrics.
       And because every training fault starts after exactly one hour, the first hour of every run is always normal: the models learn
       this, which matters for how the false alarm rate should be read (<a href="results.html#far-note">details</a>).</p>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L247">how rows are labelled</a></p>
   </section>
 
   <section class="section" id="prep" data-toc="Preprocessing">
@@ -262,6 +264,7 @@
     <p class="note">For the final test, the chosen models and their standardizing are fitted again on the training and validation runs
       together; the test files are only ever transformed and scored. As a check, the pipeline counts validation and test rows that are
       identical to a training row: 0 in both cases.</p>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L358">history inputs</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L415">standardizing, fitted on training rows</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L989">PCA monitoring, fitted on fault-free runs</a></p>
   </section>
 
   <section class="section" id="models" data-toc="The models">
@@ -313,6 +316,7 @@
           (up to 20,000 rows), so it is shown for comparison and never chosen as the best model.</td><td>Training rows, C, history window</td></tr>
       </tbody></table></div>
     <p class="note">How each family did, best settings first: <a href="results.html#families">the best of each model</a>.</p>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L460">model families and settings</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L1110">training every model</a></p>
   </section>
 
   <section class="section" id="protocol" data-toc="How models are judged">
@@ -354,6 +358,7 @@
           match a training row; the count is in the data quality checks above (it is 0).</p>
       </div>
     </details>
+      <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L276">the split by simulation number</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/main/splits/validation_simulation_runs.txt"><code>the exact validation runs</code></a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L536">threshold at 5% false alarms</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L614">bootstrap intervals</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L1271">choosing the best model</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L1737">random-split demonstration</a> · <a href="https://github.com/Fang099/tep-fault-detection/blob/main/results/split_demo.csv"><code>results/split_demo.csv</code></a></p>
   </section>
 
   <section class="section" id="results" data-toc="Results">

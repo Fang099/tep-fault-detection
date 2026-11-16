@@ -122,6 +122,22 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100   # a quicke
     <p class="note" id="current-data"></p>
   </section>
 
+  <section class="section" id="files" data-toc="Results and split files">
+    <h2>Results and split files</h2>
+    <p>Every number on this site is read from the result files in <code>docs/data/</code>. The repository also has them as readable
+      tables, so they can be checked without running anything:</p>
+    <ul class="tight">
+      <li><a href="https://github.com/Fang099/tep-fault-detection/tree/main/results"><code>results/</code></a>: every detection and diagnosis
+        model on validation, the final test, each fault, the end-to-end system, the learning curve and the random-split demonstration.</li>
+      <li><a href="https://github.com/Fang099/tep-fault-detection/tree/main/splits"><code>splits/</code></a>: the exact 400 training and 100
+        validation simulation numbers.</li>
+      <li><a href="https://github.com/Fang099/tep-fault-detection/tree/main/exploration"><code>exploration/</code></a>: my first exploration
+        notebook, from before the pipeline.</li>
+    </ul>
+    <p class="note"><code>python scripts/make_tables.py</code> rebuilds <code>results/</code> and <code>splits/</code> from
+      <code>docs/data/</code>; it needs no data and no training.</p>
+  </section>
+
   <section class="section" id="exact" data-toc="How exact is a rerun">
     <h2>How exact is a rerun?</h2>
     <ul class="tight">

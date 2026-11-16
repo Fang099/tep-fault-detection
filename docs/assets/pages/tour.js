@@ -59,8 +59,13 @@ const STEPS = [
       el.querySelectorAll(".tour-q").forEach(b => b.addEventListener("click", () => {
         el.querySelectorAll(".tour-q").forEach(x => x.classList.toggle("on", x === b));
         $("t1-reveal").innerHTML = b.dataset.k === "det"
-          ? `The best model catches <b>${pct(D.det.val.recall)}</b> of faulty readings while raising a false alarm on only 5% of normal ones.`
-          : `Once a fault is flagged, the best model names the right one with a macro-F1 of <b>${num(D.dia.val.macro_F1, 3)}</b> (1 = always right).`;
+          ? `The best model catches <b>${pct(D.det.val.recall)}</b> of faulty readings while raising a false alarm on only 5% of normal ones.
+             <span class="tour-small">Detection is a trade-off: alarm more often and you catch more faults but also raise more false alarms.
+             So the false alarms are fixed at 5%, and the question is how many faults are caught at that level.</span>`
+          : `Once a fault is flagged, the best model names the right one for <b>${pct(D.dia.val.accuracy)}</b> of faulty readings.
+             <span class="tour-small">Diagnosis has no false alarm side to fix, but some faults are much harder to name than others. So it is
+             also scored with macro-F1: a score per fault, averaged so that every fault counts equally. Here it is
+             ${num(D.dia.val.macro_F1, 3)} (1 = every fault always named correctly).</span>`;
       }));
     },
   },
