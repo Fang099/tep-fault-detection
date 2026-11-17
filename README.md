@@ -21,7 +21,7 @@ folder, download these four files into one folder:
 - `TEP_FaultFree_Training.csv`, `TEP_Faulty_Training.csv`
 - `TEP_FaultFree_Testing.csv`, `TEP_Faulty_Testing.csv`
 
-One row is one 3-minute time step of one simulation run. The models use only the 52 process variables
+One row is one 3-minute time step of one simulation run. The models use only the 52 process variables:
 (`xmeas_1`–`xmeas_41`, `xmv_1`–`xmv_11`).
 
 ## Method
@@ -247,7 +247,7 @@ website ([AI use and contributions](https://fang099.github.io/tep-fault-detectio
   implementations.
 - **The website:** every page was loaded and checked after each change.
 
-## References 
+## References
 
 **Data and background**
 
