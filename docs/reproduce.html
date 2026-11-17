@@ -15,110 +15,32 @@
 <nav id="topnav"></nav>
 <header class="page-head"><div class="inner">
   <h1>Run everything yourself</h1>
-  <p class="lede">All code is in the <a href="https://github.com/Fang099/tep-fault-detection">GitHub repository</a>. The pipeline trains
-    every model, chooses thresholds and models on validation, runs the final test, and writes the files this website reads.</p>
+  <p class="lede">All code is in the <a href="https://github.com/Fang099/tep-fault-detection">GitHub repository</a>. The README there has the
+    full setup and run steps; this page is a short summary.</p>
 </div></header>
 
 <div class="layout">
 <aside class="sidetoc" id="sidetoc" aria-label="On this page"></aside>
 <main>
-  <section class="section" id="data" data-toc="Get the data">
-    <h2>Get the data</h2>
-    <p>Download the four CSV files from the Kaggle dataset <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>
-      into one folder, keeping their names:</p>
-    <pre><code>TEP_FaultFree_Training.csv   TEP_Faulty_Training.csv
-TEP_FaultFree_Testing.csv    TEP_Faulty_Testing.csv</code></pre>
-    <p class="note">The first run converts each CSV to a compressed Parquet file next to it, so later runs load in seconds.</p>
-    <ul class="tight">
-      <li><b>Access.</b> Downloading from Kaggle needs a free account. The data is not stored in the repository: the four files hold
-        about 15 million rows. The licence is stated on the dataset's page; the original files were published on Harvard Dataverse
-        (Rieth et al., 2017).</li>
-      <li><b>No keys in the repository.</b> The code never asks for a Kaggle key: it only reads the CSV files from the folder you
-        give it. If you download with the Kaggle command-line tool, keep its <code>kaggle.json</code> key outside the project folder.</li>
-    </ul>
+  <section class="section" id="where" data-toc="Where the details are">
+    <h2>Where the details are</h2>
+    <p>The full run instructions are in the repository README, so they are in one place next to the code: getting the data,
+      every command and option, a step-by-step account of the pipeline, running on Google Colab, rebuilding this website, and
+      how exact a rerun is.</p>
+    <p><a href="https://github.com/Fang099/tep-fault-detection#reproducing-the-results"><b>Open the README: Reproducing the results</b></a></p>
   </section>
 
-  <section class="section" id="steps" data-toc="What the pipeline does">
-    <h2>What the pipeline does, step by step</h2>
-    <p class="intro">Everything is in one script, <code>tep_pipeline.py</code>, and every random choice uses the same seed (42), so a
-      rerun on the same data and package versions makes the same split and the same models.</p>
-    <ol class="tight">
-      <li><b>Load</b> the two training files and label each row: faulty if <code>faultNumber &gt; 0</code> and
-        <code>sample &gt; 20</code> (160 in the test files), otherwise normal.</li>
-      <li><b>Split by simulation number.</b> The 500 simulation numbers are divided 80% / 20% at random (seed 42). A number goes to
-        the same side for all 21 kinds of run (fault-free and faults 1 to 20), giving 8,400 training runs and 2,100 validation runs.
-        The script stops if any simulation number is on both sides, and counts validation rows identical to a training row (0).</li>
-      <li><b>Build the inputs</b>: the 52 readings, and for the history models their rolling mean and standard deviation over the
-        last <i>W</i> samples of the same run. Standardizing is fitted on the training runs only.</li>
-      <li><b>Train</b> every model and setting on the training runs.</li>
-      <li><b>Score on validation.</b> For detection, the threshold is the score that 5% of normal validation rows exceed. The best
-        detection model catches the most faulty rows at that threshold; the best diagnosis model has the highest macro-F1. Windows
-        longer than one hour and the SVM are shown but cannot be chosen.</li>
-      <li><b>Intervals</b>: 200 resamples of whole validation runs, within each fault type.</li>
-      <li><b>Final test</b> (<code>--final-test</code>): the chosen models are fitted again on training and validation runs together
-        and scored once on the test files, with the validation thresholds unchanged. The exact validated models are scored too.</li>
-      <li><b>Export</b> the results as JSON files for this website.</li>
-    </ol>
-  </section>
-
-  <section class="section" id="colab" data-toc="Run on Colab">
-    <h2>Run on Google Colab</h2>
-    <ol class="tight">
-      <li>Put the CSVs in a Google Drive folder, for example <code>MyDrive/TEP</code>.</li>
-      <li>In Colab, open <b>File → Open notebook → GitHub</b>, enter <code>Fang099/tep-fault-detection</code> and open <code>run_colab.ipynb</code>.</li>
-      <li>Set <code>DATA_DIR</code> to your folder and run the cells in order. Finished models are saved to Drive, so an interrupted run
-        continues where it stopped.</li>
-      <li>The notebook starts with 100 runs per fault, which fits in a free Colab session. All the data needs more memory and time
-        than the free tier gives.</li>
-    </ol>
-  </section>
-
-  <section class="section" id="local" data-toc="Run on any computer">
-    <h2>Run on any computer</h2>
-    <pre><code>git clone https://github.com/Fang099/tep-fault-detection.git
-cd tep-fault-detection
-pip install -r requirements.txt
-
-python tep_pipeline.py --data-dir path/to/csvs                # 1. train and validate every model (all the data)
-python tep_pipeline.py --data-dir path/to/csvs --final-test   # 2. once, at the end: the final test
-
-python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100   # a quicker, smaller run</code></pre>
-    <p>With the default options these two commands reproduce everything on this site. The options below are only needed for a
-      smaller or partial run.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Option</th><th>Default</th><th>Meaning</th></tr></thead>
-      <tbody>
-        <tr><td><code>--runs-per-fault</code></td><td class="n">0</td><td>Use the first N runs of each fault type; 0 means all 500.</td></tr>
-        <tr><td><code>--families</code></td><td class="n">all</td><td>Model families to train, comma-separated: <code>logreg,pcalr,pcamon,tree,rf,gb,ada,xgb,svm</code>. Finished models are always skipped, so <code>--families svm</code> adds just the RBF SVM to finished results.</td></tr>
-        <tr><td><code>--history-families</code></td><td class="n">logreg,pcamon,rf,xgb,svm</td><td>Families also trained with 30-minute rolling mean and standard deviation inputs; an empty string turns this off.</td></tr>
-        <tr><td><code>--hist-windows</code></td><td class="n">2,5,20,40</td><td>Other history windows, in 3-minute samples, for the window sweep: the best 30-minute settings of each history family are retrained with each. An empty string skips the sweep.</td></tr>
-        <tr><td><code>--det-stride</code></td><td class="n">1</td><td>Detection trains on every k-th time step of each run (1 = every step).</td></tr>
-        <tr><td><code>--diag-stride</code></td><td class="n">1</td><td>Diagnosis trains on every k-th time step (1 = every step).</td></tr>
-        <tr><td><code>--selection-far</code></td><td class="n">0.05</td><td>False-alarm rate used to set thresholds and pick the best detection model.</td></tr>
-        <tr><td><code>--test-runs-per-fault</code></td><td class="n">0</td><td>Faulty test runs used per fault type in the final test; 0 = all 500.</td></tr>
-        <tr><td><code>--learning-curve</code></td><td class="n">1</td><td>Retrain the best detection and diagnosis models on fewer runs and sparser samples to measure how much data matters; 0 skips it.</td></tr>
-        <tr><td><code>--end-to-end</code></td><td class="n">1</td><td>Score detection and diagnosis together with 21 answers: the two-model chain and one 21-answer model with the best diagnosis settings; 0 skips it.</td></tr>
-        <tr><td><code>--svm-rows</code></td><td class="n">5000,20000</td><td>Training-subset sizes (random rows) for the RBF SVM. An exact kernel SVM's cost grows with the square of this, so it never uses all the data and is never chosen as the best model.</td></tr>
-        <tr><td><code>--svm-c</code></td><td class="n">1,10</td><td>Values of C (margin softness) for the RBF SVM.</td></tr>
-        <tr><td><code>--split-demo</code></td><td class="n">1</td><td>1 = also measure what a random split by row would have reported (logistic regression and a deep tree, trained both ways on the same number of rows).</td></tr>
-        <tr><td><code>--final-test</code></td><td class="n">off</td><td>Retrain the chosen models on all training runs and evaluate once on test.</td></tr>
-        <tr><td><code>--force-retrain</code></td><td class="n">off</td><td>Retrain models even if their results already exist.</td></tr>
-      </tbody></table></div>
-    <p class="note">The full dataset needs more memory than a free Colab session provides, and training every model on all of it
-      took more than a day on a desktop PC, longer than a free Colab session lasts. On free Colab, use a smaller
-      <code>--runs-per-fault</code>. Finished models are skipped on a rerun, so a long run can be done in pieces. Results go to <code>outputs_&lt;N&gt;runs/</code> (or <code>outputs_full/</code>) inside the data folder:
-      trained models in <code>models_v3/</code> and the website files in <code>web_data/</code>.</p>
-  </section>
-
-  <section class="section" id="site" data-toc="Update this website">
-    <h2>Update this website</h2>
-    <p>The website is plain HTML, CSS and JavaScript in the <code>docs/</code> folder, served by GitHub Pages. It reads the exported
-      results from <code>docs/data/</code>; nothing is trained in the browser.</p>
-    <ol class="tight">
-      <li>Copy the contents of <code>web_data/</code> into <code>docs/data/</code> (the Colab notebook's last cell downloads them as a zip).</li>
-      <li>Commit and push. GitHub Pages updates within a minute or two.</li>
-      <li>To preview locally: <code>cd docs</code>, then <code>python -m http.server</code>, and open <code>http://localhost:8000</code>.</li>
-    </ol>
+  <section class="section" id="short" data-toc="The short version">
+    <h2>The short version</h2>
+    <p>Get the four CSV files from the Kaggle dataset <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>
+      into one folder, then run the two commands below. One script, <code>tep_pipeline.py</code>, loads and labels the data,
+      splits it by simulation number, trains every model, picks thresholds and models on validation, runs the test once, and
+      writes the files this website reads. A fixed seed (42) makes the split and models repeatable.</p>
+    <pre><code>pip install -r requirements.txt
+python tep_pipeline.py --data-dir path/to/csvs                # train and validate every model
+python tep_pipeline.py --data-dir path/to/csvs --final-test   # once, at the end: the final test</code></pre>
+    <p class="note">All the data needs more memory than a free Colab session provides; training every model took more than a day on
+      a desktop PC. The README shows a smaller run and the Colab notebook.</p>
     <p class="note" id="current-data"></p>
   </section>
 
@@ -133,20 +55,6 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100   # a quicke
         validation simulation numbers.</li>
       <li><a href="https://github.com/Fang099/tep-fault-detection/tree/main/exploration"><code>exploration/</code></a>: my first exploration
         notebook, from before the pipeline.</li>
-    </ul>
-    <p class="note"><code>python scripts/make_tables.py</code> rebuilds <code>results/</code> and <code>splits/</code> from
-      <code>docs/data/</code>; it needs no data and no training.</p>
-  </section>
-
-  <section class="section" id="exact" data-toc="How exact is a rerun">
-    <h2>How exact is a rerun?</h2>
-    <ul class="tight">
-      <li><b>Same split, same settings.</b> The seed, the split and every grid of settings are fixed, so a rerun makes the same split
-        and trains the same models. <code>requirements.txt</code> gives minimum package versions; other library versions, processors or
-        core counts can change floating-point results slightly, in the last decimals.</li>
-      <li><b>What cannot be rerun from the website alone.</b> The site stores each model's scores as distributions and a few example
-        runs, not the trained models. A new question about the models, such as the false alarm rate by time since the start of a run
-        (<a href="results.html#far-note">why it matters</a>), needs the pipeline to be run again.</li>
     </ul>
   </section>
 </main>
