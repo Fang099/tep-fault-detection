@@ -247,7 +247,7 @@ website ([AI use and contributions](https://fang099.github.io/tep-fault-detectio
   implementations.
 - **The website:** every page was loaded and checked after each change.
 
-## References
+## References 
 
 **Data and background**
 
