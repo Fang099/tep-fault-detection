@@ -491,3 +491,4 @@ ol.conclusions li { margin: 9px 0; }
 .th-float input[type=range] { flex: 1 1 160px; width: auto; min-width: 120px; margin: 0; }
 .th-float-val { font-weight: 600; font-size: 13.5px; min-width: 110px; }
 @media (max-width: 640px) { .th-float-far { display: none; } .th-float-val { min-width: 0; } }
+body.has-th-float { padding-bottom: 80px; }

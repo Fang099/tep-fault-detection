@@ -123,8 +123,9 @@
         compared over eight strengths on the 52 readings, with the strengths chosen on one validation split (no cross-validation) and
         the grid stopping at C = 0.01 because weaker penalties were slow and matched no penalty in a smaller trial run. With the history
         inputs only ridge and no penalty were tried, and diagnosis lasso stops at C = 0.0001. For the tree models the only controls
-        varied were depth and number of rounds; the learning rate (0.1) and the boosting leaf penalty were fixed, and settings such
-        as minimum leaf size or row sampling were not tuned. So "regularization barely helps" holds for this setup, not for every
+        varied were depth and the number of trees or rounds; the boosting learning rate (0.1), the boosting leaf penalty and the row
+        sampling of forests and AdaBoost were fixed, and settings such as minimum leaf size were not tuned. The RBF SVM tried only
+        C = 1 and 10, on subsets. So "regularization barely helps" holds for this setup, not for every
         way of regularizing the other models, and a fuller study could change how the families compare.</li>
       <li><b>Each model was trained once.</b> The 95% intervals come from resampling the validation runs, so they describe how much a
         score depends on which runs were held out. They do not cover what would change with a different random seed or a

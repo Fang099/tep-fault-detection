@@ -142,6 +142,7 @@ function setupFloatingThreshold() {
   const update = () => {
     const a = first.getBoundingClientRect(), z = last.getBoundingClientRect();
     bar.hidden = !(a.bottom < 0 && z.bottom > window.innerHeight * 0.5);
+    document.body.classList.toggle("has-th-float", !bar.hidden);
   };
   window.addEventListener("scroll", update, { passive: true });
   window.addEventListener("resize", update);

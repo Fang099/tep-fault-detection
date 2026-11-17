@@ -121,6 +121,9 @@ same data makes the same split and the same models.
 
 | Option | Default | Meaning |
 |---|---|---|
+| `--data-dir` | dataset | Folder with the four TEP CSVs; the Parquet cache is saved here too. |
+| `--out-dir` | the data folder | Where results go. |
+| `--work-dir` | none | Optional fast local folder to copy the Parquet cache into (for example `/content/dataset` on Colab). |
 | `--runs-per-fault` | 0 | Use the first N runs of each fault type; 0 means all 500. |
 | `--families` | all | Model families to train, comma-separated: `logreg,pcalr,pcamon,tree,rf,gb,ada,xgb,svm`. Finished models are always skipped, so `--families svm` adds just the RBF SVM to finished results. |
 | `--history-families` | logreg,pcamon,rf,xgb,svm | Families also trained with 30-minute rolling mean and standard deviation inputs; an empty string turns this off. |
@@ -134,6 +137,7 @@ same data makes the same split and the same models.
 | `--svm-rows` | 5000,20000 | Training-subset sizes (random rows) for the RBF SVM. An exact kernel SVM's cost grows with the square of this, so it never uses all the data and is never chosen as the best model. |
 | `--svm-c` | 1,10 | Values of C (margin softness) for the RBF SVM. |
 | `--split-demo` | 1 | 1 = also measure what a random split by row would have reported (logistic regression and a deep tree, trained both ways on the same number of rows). |
+| `--diag-lasso-max-c` | 0.0001 | Largest C trained for diagnosis lasso; weaker penalties are slow on all the data and match ridge. |
 | `--final-test` | off | Retrain the chosen models on all training runs and evaluate once on test. |
 | `--force-retrain` | off | Retrain models even if their results already exist. |
 
@@ -158,8 +162,9 @@ The full list is on the website's Results page. The most important ones:
   files, with the threshold unchanged, it is 7.4%. At an equal 5% false alarm rate the test recall matches
   validation.
 - **Regularization was only studied in depth for logistic regression** (lasso, ridge and no penalty over eight
-  strengths, chosen on one validation split). For the tree models only depth and number of rounds were varied; the
-  learning rate and boosting leaf penalty were fixed and other settings were not tuned. "Regularization barely
+  strengths, chosen on one validation split). For the tree models only depth and the number of trees or rounds
+  were varied; the boosting learning rate, leaf penalty and row sampling were fixed and other settings were not tuned.
+  The RBF SVM tried only C = 1 and 10, on subsets. "Regularization barely
   helps" holds for this setup only.
 - **5% false alarms** is a yardstick for comparing models, not an operating point for a plant.
 - **Simulation only**, with 20 known fault types, nothing here shows how a new kind of fault or a real plant
