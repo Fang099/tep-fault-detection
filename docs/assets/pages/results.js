@@ -409,7 +409,7 @@ async function renderErrors(manifest, vv, best) {
       Since the same threshold flags 5% of normal rows on average (and <a href="#far-note">more than that after the first hour</a>), this is
       not far above guessing.` : ""} ${mid.length ? `Fault${mid.length > 1 ? "s" : ""} ${list(mid.map(r => r.f))} ${mid.length > 1 ? "are" : "is"} in between
       (${list(mid.map(r => pct(r.rec, 0)))} caught).` : ""} These faults change the measured variables very little
-      (<a href="index.html#explore">see the sensor traces</a>), which matches what the TEP literature reports for faults 3, 9 and 15.
+      (<a href="index.html#explore">see the sensor traces</a>), which matches what the TEP literature reports for faults 3, 9 and 15 (Chiang et al., 2001).
       To see a typical miss, open the <a href="${modelLink("detection.html", best)}#run">run viewer</a> and pick fault ${top3[0].f}: the score stays in the
       normal range for most of the run.</p>
     ${confTxt}

@@ -1,6 +1,4 @@
-# Minimum versions the pipeline needs. The exact versions used for the published
-# results were not recorded; newer versions work (the script adapts to scikit-learn's
-# newer LogisticRegression options) but can change scores in the last decimals.
+# Minimum versions; newer versions work.
 numpy>=1.24
 pandas>=2.0
 pyarrow>=12

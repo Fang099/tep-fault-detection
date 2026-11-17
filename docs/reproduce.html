@@ -141,11 +141,9 @@ python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100   # a quicke
   <section class="section" id="exact" data-toc="How exact is a rerun">
     <h2>How exact is a rerun?</h2>
     <ul class="tight">
-      <li><b>Same split, same settings.</b> The seed, the split and every grid of settings are fixed in the script.</li>
-      <li><b>Package versions.</b> <code>requirements.txt</code> lists the minimum versions the code needs. The exact versions used
-        for the published run were not recorded, so a rerun with other versions can differ in the last decimals.</li>
-      <li><b>Hardware.</b> A different processor, number of cores or build of a library can change floating-point results in the
-        last decimals.</li>
+      <li><b>Same split, same settings.</b> The seed, the split and every grid of settings are fixed, so a rerun makes the same split
+        and trains the same models. <code>requirements.txt</code> gives minimum package versions; other library versions, processors or
+        core counts can change floating-point results slightly, in the last decimals.</li>
       <li><b>What cannot be rerun from the website alone.</b> The site stores each model's scores as distributions and a few example
         runs, not the trained models. A new question about the models, such as the false alarm rate by time since the start of a run
         (<a href="results.html#far-note">why it matters</a>), needs the pipeline to be run again.</li>

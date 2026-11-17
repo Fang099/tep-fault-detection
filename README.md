@@ -71,7 +71,8 @@ python tep_pipeline.py --data-dir path/to/csvs                # 1. train and val
 python tep_pipeline.py --data-dir path/to/csvs --final-test   # 2. once, at the end: retrain the chosen models, score test
 ```
 
-Training every model on all the data took more than a day on a desktop PC. For a quicker check:
+`requirements.txt` gives minimum package versions; a rerun with other versions or on other hardware can differ slightly
+in the last decimals. Training every model on all the data took more than a day on a desktop PC. For a quicker check:
 
 ```bash
 python tep_pipeline.py --data-dir path/to/csvs --runs-per-fault 100      # 100 runs per fault instead of 500
@@ -172,7 +173,15 @@ website ([AI use and contributions](https://fang099.github.io/tep-fault-detectio
 
 - Every number on the site was computed by the pipeline from the dataset, on runs I carried out. No result was
   written or estimated by the AI.
-- The test files were used once, after all choices were made on validation.
+- The AI did not choose the research question, the dataset or which experiments to run.
+- The AI did not generate or change any data: the dataset is used as published.
+
+**How the work was checked**
+
+- **Leakage:** the pipeline counts validation and test rows that exactly match a training row (0 in both).
+- **Correctness:** key calculations, such as the rolling statistics, were checked against standard library
+  implementations.
+- **The website:** every page was loaded and checked after each change.
 
 ## References
 
@@ -181,18 +190,32 @@ website ([AI use and contributions](https://fang099.github.io/tep-fault-detectio
 - Downs, J. J. and Vogel, E. F. (1993). A plant-wide industrial process control problem. *Computers & Chemical
   Engineering*, 17(3), 245–255.
 - Rieth, C. A., Amsel, B. D., Tran, R. and Cook, M. B. (2017). Additional Tennessee Eastman Process simulation data
-  for anomaly detection evaluation. Harvard Dataverse. Distributed as CSV on Kaggle:
-  [afrniomelo/tep-csv](https://www.kaggle.com/datasets/afrniomelo/tep-csv).
+  for anomaly detection evaluation. Harvard Dataverse. The CSV version used here is a copy uploaded to Kaggle by
+  afrniomelo: [afrniomelo/tep-csv](https://www.kaggle.com/datasets/afrniomelo/tep-csv).
 - Chiang, L. H., Russell, E. L. and Braatz, R. D. (2001). *Fault Detection and Diagnosis in Industrial Systems*.
   Springer.
 - Jackson, J. E. and Mudholkar, G. S. (1979). Control procedures for residuals associated with principal component
   analysis. *Technometrics*, 21(3), 341–349. (The SPE limit used by PCA monitoring.)
 
-**Software** (used as libraries; no outside code was copied into this repository)
+**Methods** (the original papers of the model families compared)
+
+- Breiman, L. (2001). Random forests. *Machine Learning*, 45, 5–32.
+- Friedman, J. H. (2001). Greedy function approximation: a gradient boosting machine. *Annals of Statistics*,
+  29(5), 1189–1232.
+- Freund, Y. and Schapire, R. E. (1997). A decision-theoretic generalization of on-line learning and an application
+  to boosting. *Journal of Computer and System Sciences*, 55(1), 119–139.
+- Cortes, C. and Vapnik, V. (1995). Support-vector networks. *Machine Learning*, 20, 273–297.
+- Tibshirani, R. (1996). Regression shrinkage and selection via the lasso. *Journal of the Royal Statistical Society B*,
+  58(1), 267–288.
+
+**Software** (used as libraries; the code was written for this project)
 
 - Pedregosa, F. et al. (2011). Scikit-learn: Machine learning in Python. *Journal of Machine Learning Research*, 12,
   2825–2830.
 - Chen, T. and Guestrin, C. (2016). XGBoost: A scalable tree boosting system. *Proceedings of KDD 2016*, 785–794.
-- NumPy (Harris et al., 2020, *Nature* 585, 357–362), pandas, SciPy and joblib.
+- Harris, C. R. et al. (2020). Array programming with NumPy. *Nature*, 585, 357–362.
+- Virtanen, P. et al. (2020). SciPy 1.0: fundamental algorithms for scientific computing in Python. *Nature Methods*,
+  17, 261–272. The pipeline also uses pandas and joblib.
 - The website uses no JavaScript libraries; its charts are drawn by its own code. Fonts: IBM Plex Sans and
   IBM Plex Mono (SIL Open Font License), loaded from Google Fonts.
+- Built with the help of Claude (Anthropic); see *AI use and contributions* above.

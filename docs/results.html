@@ -115,7 +115,7 @@
         "something new", and detection was only ever tested on those same 20 types, so nothing here shows how a new kind of fault
         would be handled.</li>
       <li><b>Some faults are invisible to these variables.</b> Faults 9 and 15 (and partly 3) barely change the measured data, as the
-        TEP literature also reports. Most missed rows come from them (<a href="#errors">where the model fails</a>), and low scores on them
+        TEP literature also reports (Chiang et al., 2001). Most missed rows come from them (<a href="#errors">where the model fails</a>), and low scores on them
         are expected rather than fixable by tuning.</li>
       <li id="lim-grid"><b>"Best" means best among the settings tried.</b> The best model uses the largest tree depth and number of
         rounds in its grid, so larger models might score higher, and the gaps between families partly reflect how far each grid went.</li>
@@ -149,12 +149,18 @@
     <ul class="tight">
       <li>Downs, J. J. and Vogel, E. F. (1993). A plant-wide industrial process control problem. <i>Computers &amp; Chemical Engineering</i>, 17(3), 245–255.</li>
       <li>Rieth, C. A., Amsel, B. D., Tran, R. and Cook, M. B. (2017). Additional Tennessee Eastman Process simulation data for anomaly
-        detection evaluation. Harvard Dataverse. Distributed as CSV on Kaggle: <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>.</li>
+        detection evaluation. Harvard Dataverse. The CSV version used here is a copy uploaded to Kaggle by afrniomelo: <a href="https://www.kaggle.com/datasets/afrniomelo/tep-csv">afrniomelo/tep-csv</a>.</li>
       <li>Chiang, L. H., Russell, E. L. and Braatz, R. D. (2001). <i>Fault Detection and Diagnosis in Industrial Systems</i>. Springer.</li>
       <li>Jackson, J. E. and Mudholkar, G. S. (1979). Control procedures for residuals associated with principal component analysis. <i>Technometrics</i>, 21(3), 341–349.</li>
+      <li>Breiman, L. (2001). Random forests. <i>Machine Learning</i>, 45, 5–32.</li>
+      <li>Friedman, J. H. (2001). Greedy function approximation: a gradient boosting machine. <i>Annals of Statistics</i>, 29(5), 1189–1232.</li>
+      <li>Freund, Y. and Schapire, R. E. (1997). A decision-theoretic generalization of on-line learning and an application to boosting. <i>Journal of Computer and System Sciences</i>, 55(1), 119–139.</li>
+      <li>Cortes, C. and Vapnik, V. (1995). Support-vector networks. <i>Machine Learning</i>, 20, 273–297.</li>
+      <li>Tibshirani, R. (1996). Regression shrinkage and selection via the lasso. <i>Journal of the Royal Statistical Society B</i>, 58(1), 267–288.</li>
       <li>Pedregosa, F. et al. (2011). Scikit-learn: Machine learning in Python. <i>Journal of Machine Learning Research</i>, 12, 2825–2830.</li>
       <li>Chen, T. and Guestrin, C. (2016). XGBoost: A scalable tree boosting system. <i>Proceedings of KDD 2016</i>, 785–794.</li>
-      <li>Harris, C. R. et al. (2020). Array programming with NumPy. <i>Nature</i>, 585, 357–362. The pipeline also uses pandas, SciPy and joblib.</li>
+      <li>Harris, C. R. et al. (2020). Array programming with NumPy. <i>Nature</i>, 585, 357–362.</li>
+      <li>Virtanen, P. et al. (2020). SciPy 1.0: fundamental algorithms for scientific computing in Python. <i>Nature Methods</i>, 17, 261–272. The pipeline also uses pandas and joblib.</li>
       <li>This website uses no JavaScript libraries; its charts are drawn by its own code. Fonts: IBM Plex Sans and IBM Plex Mono (SIL Open Font License), from Google Fonts.
         Built with the help of Claude (Anthropic): see <a href="index.html#ai-use">AI use and contributions</a>.</li>
     </ul>
