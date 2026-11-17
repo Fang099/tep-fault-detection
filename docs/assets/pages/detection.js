@@ -41,6 +41,7 @@ async function main() {
     state.farTarget = null;
     renderThresholdDependent();
   });
+  setupFloatingThreshold();
   $("far-buttons").addEventListener("click", e => {
     const b = e.target.closest("button");
     if (!b) return;
@@ -118,6 +119,43 @@ function renderAll() {
   renderChance();
 }
 
+// A copy of the threshold controls that floats at the bottom of the screen while the sections that depend on the
+// threshold (scores, ROC, cost, fault by fault, single run) are in view, so the slider can be moved without scrolling up.
+function setupFloatingThreshold() {
+  const bar = document.createElement("div");
+  bar.className = "th-float";
+  bar.hidden = true;
+  bar.setAttribute("role", "group");
+  bar.setAttribute("aria-label", "Alarm threshold (same control as in the first section)");
+  bar.innerHTML = `<span class="th-float-label">Threshold</span>
+    <input type="range" id="th-mini" min="0" value="0" aria-label="Alarm threshold">
+    <span class="th-float-val" id="th-mini-val"></span>
+    <span class="seg th-float-far" id="th-mini-far">${[...$("far-buttons").querySelectorAll("button")].map(b => `<button type="button" data-far="${b.dataset.far}">${b.textContent}</button>`).join("")}</span>`;
+  document.body.appendChild(bar);
+  const mini = bar.querySelector("#th-mini");
+  mini.addEventListener("input", () => { $("th").value = mini.value; $("th").dispatchEvent(new Event("input")); });
+  bar.querySelector("#th-mini-far").addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (b) $("far-buttons").querySelector(`button[data-far="${b.dataset.far}"]`)?.click();
+  });
+  const first = document.querySelector("#threshold .panel"), last = document.getElementById("run");
+  const update = () => {
+    const a = first.getBoundingClientRect(), z = last.getBoundingClientRect();
+    bar.hidden = !(a.bottom < 0 && z.bottom > window.innerHeight * 0.5);
+  };
+  window.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("resize", update);
+  update();
+}
+
+function syncFloatingThreshold() {
+  const mini = document.getElementById("th-mini");
+  if (!mini) return;
+  mini.max = $("th").max; mini.value = $("th").value;
+  document.getElementById("th-mini-val").textContent = $("th-val").textContent;
+  document.querySelectorAll("#th-mini-far button").forEach(b => b.classList.toggle("on", state.farTarget != null && +b.dataset.far === state.farTarget));
+}
+
 function renderThresholdDependent() {
   $("th").value = state.t;
   renderThreshold();
@@ -129,6 +167,7 @@ function renderThresholdDependent() {
   renderFaults();
   renderFaultPanel();
   renderRun();
+  syncFloatingThreshold();
 }
 
 const isBaseline = () => familyOf(state.model) === "baseline";
