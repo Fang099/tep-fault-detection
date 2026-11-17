@@ -14,9 +14,9 @@ The project website (in `docs/`) lets you compare models, move the decision thre
 ## Data
 
 Kaggle dataset [`afrniomelo/tep-csv`](https://www.kaggle.com/datasets/afrniomelo/tep-csv) (Rieth et al., 2017;
-originally published on Harvard Dataverse). It is not stored in this repo (about 15 million rows); downloading it
+originally published on Harvard Dataverse). It is not stored in this repo (as it has about 15 million rows). Downloading it
 needs a free Kaggle account, and its licence is stated on the dataset page. The code only reads the CSV files from a
-folder: no Kaggle key is needed, and none should be committed. Download these four files into one folder:
+folder, download these four files into one folder:
 
 - `TEP_FaultFree_Training.csv`, `TEP_Faulty_Training.csv`
 - `TEP_FaultFree_Testing.csv`, `TEP_Faulty_Testing.csv`
@@ -27,8 +27,8 @@ One row is one 3-minute time step of one simulation run. The models use only the
 ## Method
 
 - **Labels:** fault-free rows and rows before the fault is injected (after sample 20 in training, sample 160 in
-  testing) are normal; rows after injection are faulty.
-- **Split:** the training files are split by simulation number, 80% train / 20% validation, at random with seed 42
+  testing) are normal. Rows after injection are faulty.
+- **Split:** the training files are split by simulation number: 80% train / 20% validation, at random with seed 42
   (8,400 training runs and 2,100 validation runs when all the data is used). Faulty run *k* of every
   fault type starts as an exact copy of fault-free run *k* (identical readings until the fault shows), so all runs
   with the same simulation number go to the same side. The pipeline checks that no validation row is identical to a
@@ -102,9 +102,8 @@ The full list is on the website's Results page. The most important ones:
   files, with the threshold unchanged, it is 7.4%. At an equal 5% false alarm rate the test recall matches
   validation.
 - **5% false alarms** is a yardstick for comparing models, not an operating point for a plant.
-- **Simulation only**, with 20 known fault types; nothing here shows how a new kind of fault or a real plant
+- **Simulation only**, with 20 known fault types, nothing here shows how a new kind of fault or a real plant
   would be handled.
-- Package versions of the published run were not recorded; `requirements.txt` gives minimum versions.
 
 ## Results and the exact split
 
@@ -165,7 +164,7 @@ website ([AI use and contributions](https://fang099.github.io/tep-fault-detectio
 - Wrote most of the code: the training and evaluation pipeline (`tep_pipeline.py`) and the website.
 - Designed most of the website's layout.
 - Wrote most of the explanatory text on the site and the documentation of the pipeline.
-- Proposed parts of the method that I then accepted, such as choosing thresholds at a fixed 5% false alarm rate on
+- Proposed parts of the method that were then accepted by me, such as choosing thresholds at a fixed 5% false alarm rate on
   validation only, and bootstrap intervals over runs.
 - Reviewed the code for bugs before the full training run.
 
