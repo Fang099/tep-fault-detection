@@ -21,13 +21,13 @@ folder, download these four files into one folder:
 - `TEP_FaultFree_Training.csv`, `TEP_Faulty_Training.csv`
 - `TEP_FaultFree_Testing.csv`, `TEP_Faulty_Testing.csv`
 
-One row is one 3-minute time step of one simulation run. The models use only the 52 process variables:
+One row is one 3-minute time step of one simulation run. The models use only the 52 process variables
 (`xmeas_1`–`xmeas_41`, `xmv_1`–`xmv_11`).
 
 ## Method
 
-- **Labels:** fault-free rows and rows before the fault is injected (after sample 20 in training, sample 160 in
-  testing) are normal. Rows after injection are faulty.
+- **Labels:** a row is faulty once its run's fault has been switched on: `faultNumber > 0` and `sample > 20` in the
+  training files (`sample > 160` in the test files). Every other row, including all fault-free rows, is normal.
 - **Split:** the training files are split by simulation number: 80% train / 20% validation, at random with seed 42
   (8,400 training runs and 2,100 validation runs when all the data is used). Faulty run *k* of every
   fault type starts as an exact copy of fault-free run *k* (identical readings until the fault shows), so all runs
@@ -54,7 +54,8 @@ One row is one 3-minute time step of one simulation run. The models use only the
 - **Thresholds and model choice:** each detection model's threshold is set so 5% of normal validation rows raise
   an alarm; the best model catches the most faults at that point. The best diagnosis model has the highest
   validation macro-F1.
-- **Final test:** the chosen models are retrained on all training runs and evaluated once on all test runs,
+- **Final test:** the chosen models are retrained on the training and validation runs together and evaluated once on
+  all test runs,
   keeping the validation thresholds; the exact validated models are evaluated too, as a check on the threshold.
 - **Metrics:** precision, recall, F1, PR-AUC, ROC-AUC and confusion matrices for detection; macro-F1 and
   per-fault recall for diagnosis; median time from fault injection to detection (k alarms in a row) and to

@@ -55,7 +55,7 @@ const STEPS = [
           <button type="button" class="tour-q" data-k="dia"><span class="tour-q-n">2</span><b>Which fault is it?</b><span>Diagnosis: one of 20 faults</span></button>
         </div>
         <p class="tour-reveal" id="t1-reveal">Click a question to see how well the best model answers it.</p>
-        ${tiles([[q.features.length, "sensors"], ["20", "fault types"], [int(D.quality.runs), "simulated runs"], [`${(D.quality.rows / 1e6).toFixed(2)} M`, "rows of readings"]])}`;
+        ${tiles([[q.features.length, "sensors"], ["20", "fault types"], [int(D.quality.runs), "training and validation runs"], [`${(D.quality.rows / 1e6).toFixed(2)} M`, "training and validation rows (test files: 10.08 M more)"]])}`;
       el.querySelectorAll(".tour-q").forEach(b => b.addEventListener("click", () => {
         el.querySelectorAll(".tour-q").forEach(x => x.classList.toggle("on", x === b));
         $("t1-reveal").innerHTML = b.dataset.k === "det"

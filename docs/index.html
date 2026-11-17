@@ -228,7 +228,7 @@
       normal, rows after it faulty. Fault-free runs are normal throughout.</p>
     <div id="timelines"></div>
     <p class="callout"><b>Two consequences.</b> Faulty rows outnumber normal ones roughly ten to one, so a model that always answers "fault"
-      already scores an F1 of about 0.96. That's why this site reports false alarms and recall on normal operation alongside the usual metrics.
+      already scores an F1 of 0.955. That's why this site reports false alarms and recall on normal operation alongside the usual metrics.
       And because every training fault starts after exactly one hour, the first hour of every run is always normal: the models learn
       this, which matters for how the false alarm rate should be read (<a href="results.html#far-note">details</a>).</p>
       <p class="code-link"><span>In the repository:</span> <a href="https://github.com/Fang099/tep-fault-detection/blob/c2b3ef0ef47a1b346ed5711519f38ce8f1284652/tep_pipeline.py#L247">how rows are labelled</a></p>
