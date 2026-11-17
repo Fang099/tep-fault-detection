@@ -119,6 +119,13 @@
         are expected rather than fixable by tuning.</li>
       <li id="lim-grid"><b>"Best" means best among the settings tried.</b> The best model uses the largest tree depth and number of
         rounds in its grid, so larger models might score higher, and the gaps between families partly reflect how far each grid went.</li>
+      <li id="lim-reg"><b>Regularization was only studied in depth for logistic regression.</b> There, lasso, ridge and no penalty were
+        compared over eight strengths on the 52 readings, with the strengths chosen on one validation split (no cross-validation) and
+        the grid stopping at C = 0.01 because weaker penalties were slow and matched no penalty in a smaller trial run. With the history
+        inputs only ridge and no penalty were tried, and diagnosis lasso stops at C = 0.0001. For the tree models the only controls
+        varied were depth and number of rounds; the learning rate (0.1) and the boosting leaf penalty were fixed, and settings such
+        as minimum leaf size or row sampling were not tuned. So "regularization barely helps" holds for this setup, not for every
+        way of regularizing the other models, and a fuller study could change how the families compare.</li>
       <li><b>Each model was trained once.</b> The 95% intervals come from resampling the validation runs, so they describe how much a
         score depends on which runs were held out. They do not cover what would change with a different random seed or a
         different split of the runs, so small gaps between models (a point or less) should not be read as real differences.</li>

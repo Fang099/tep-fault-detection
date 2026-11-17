@@ -157,6 +157,10 @@ The full list is on the website's Results page. The most important ones:
   the 5% false alarm rate set on validation is an average of nearly 0% there and more afterwards; on the test
   files, with the threshold unchanged, it is 7.4%. At an equal 5% false alarm rate the test recall matches
   validation.
+- **Regularization was only studied in depth for logistic regression** (lasso, ridge and no penalty over eight
+  strengths, chosen on one validation split). For the tree models only depth and number of rounds were varied; the
+  learning rate and boosting leaf penalty were fixed and other settings were not tuned. "Regularization barely
+  helps" holds for this setup only.
 - **5% false alarms** is a yardstick for comparing models, not an operating point for a plant.
 - **Simulation only**, with 20 known fault types, nothing here shows how a new kind of fault or a real plant
   would be handled.
