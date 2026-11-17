@@ -115,9 +115,13 @@
         <tr><th scope="row">When a prediction is made</th><td>Every 3 minutes while the plant runs, as soon as a new set of readings arrives.</td></tr>
         <tr><th scope="row">What is known at that moment</th><td>The 52 readings at that time step and, for the history models, the same
           readings over at most the previous hour of the same run, summarized as a rolling mean and standard deviation. Never used:
-          anything from the future, other runs, the time since the run started, or the fault label.</td></tr>
+          anything from the future, other runs or the fault label. The time since the run started is not an input either, but the
+          history windows hold fewer samples during a run's first hour, which lets the models recognize that hour; they have learned
+          that it is always fault-free (<a href="results.html#lim-first">limitation</a>).</td></tr>
         <tr><th scope="row">How it is judged</th><td>On simulation runs the model never saw in training. Detection: the share of faulty
-          rows caught when 5% of normal rows raise a false alarm. Diagnosis: macro-F1 over the 20 faults.
+          rows caught when 5% of normal validation rows raise a false alarm. Because almost half of those rows come from a run's first
+          hour, which the models treat as always normal, the rate after the first hour is about 8–9%
+          (<a href="results.html#far-note">why</a>). Diagnosis: macro-F1 over the 20 faults.
           <a href="#protocol">How models are judged</a>.</td></tr>
         <tr><th scope="row">What the results can claim</th><td>How well these models separate these 20 simulated faults from normal
           operation in this one simulated plant. They say nothing about a real plant, about kinds of fault that are not among the 20,

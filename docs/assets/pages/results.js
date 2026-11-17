@@ -78,7 +78,7 @@ function renderFindings(manifest) {
     `<b>Accuracy and F1 are misleading here.</b> The majority baseline scores F1 ${num(base.val.F1, 3)} by alarming on every row,
      including every normal one. Compared at 5% false alarms, it catches nothing.`,
     `<b>The best detection model (${esc(best.label)}) catches ${pct(best.val.recall)} of faulty rows at 5% false alarms</b>
-     (ROC-AUC ${num(best.val.ROC_AUC, 3)}). The remaining ${pct(1 - best.val.recall, 0)} of faulty rows look normal to it, mostly from the faults that barely change the readings.`,
+     (about 8–9% after a run's first hour; ROC-AUC ${num(best.val.ROC_AUC, 3)}). The remaining ${pct(1 - best.val.recall, 0)} of faulty rows look normal to it, mostly from the faults that barely change the readings.`,
     noneU && noneB ? `<b>Class weighting matters only a little.</b> Without a penalty, balanced weights catch ${pct(noneB.val.recall)} against
      ${pct(noneU.val.recall)} unweighted. At a fixed false-alarm rate, weighting mostly moves the threshold rather than changing the ranking of rows.` : "",
     (() => {
@@ -236,6 +236,7 @@ function farExplain(manifest, test, trace) {
   const far = r => 1 - r.normal_recall;
   const laterVal = mix.valAlarms / mix.valLater;                 // if first-hour rows raise no alarms at all
   const predicted = laterVal * (1 - mix.testShare);
+  const laterTest = (da ? 1 - da.normal_recall : 1 - dt.normal_recall) / (1 - mix.testShare);   // if test first-hour rows raise none
   let traceTxt = "";
   const run = trace?.runs?.find(r => r.fault === 0);
   if (run) {
@@ -271,7 +272,9 @@ function farExplain(manifest, test, trace) {
       the rest, and to set the threshold on fault-free rows after the first hour only.</p>
     <p class="note"><b>What it means for the results.</b> Every model on this site gets its threshold from the same validation
       rows, so comparisons between models stay fair. What changes is the reading of "5% false alarms": during steady operation the
-      real rate for the best model is nearer ${pct(far(dt), 0)} to ${pct(laterVal, 0)}. The test files, where faults start after 8 hours
+      real rate for the best model is about ${pct(laterTest, 0)} to ${pct(laterVal, 0)}: ${pct(laterVal, 0)} from the validation make-up above, and
+      ${pct(laterTest, 0)} if the test's ${da ? pct(far(da)) : pct(far(dt))} comes entirely from rows after the first hour. Every "at 5% false alarms"
+      figure on this site, including the headline, should be read that way. The test files, where faults start after 8 hours
       instead of 1, show that <i>catching</i> faults does not depend on the fault starting at a particular time. What no file can show
       is how the model would treat a fault that began within the first hour of a run; given the above, it would probably be slow to
       flag it.</p>`;
@@ -357,6 +360,8 @@ function renderConclusions(manifest, test, like) {
   const items = [
     `<b>Detection works for most faults.</b> The best model (${esc(best.label)}) catches ${pct(rec(best))} of faulty rows at 5% false
       alarms on validation runs it never saw${like ? `, and ${pct(like.recall)} at the same false alarm rate on the separate test files` : ""}.
+      The 5% is an average over normal rows of which almost half come from a run's first hour, where the model raises almost no
+      alarms; after the first hour the same threshold gives about 8–9% (<a href="#far-note">why</a>).
       A model that ignores the sensors cannot catch anything at that false alarm rate: it can only alarm on every row or on none.`,
     `<b>Diagnosis works too.</b> Once a fault is active, the best model names the right one of 20 with macro-F1 ${num(bestD.val.macro_F1, 3)}
       on validation${gt ? ` and ${num(gt.macro_F1, 3)} on test` : ""}, against ${num(baseD?.val.macro_F1, 3)} for always naming the same fault.`,

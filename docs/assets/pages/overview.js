@@ -100,7 +100,7 @@ loadManifest().then(manifest => {
     ${manifest.test ? "Test results are on the Results page." : "The final test has not been run yet."}`;
   $("result-tiles").innerHTML = [
     tile("Best detection model", esc(det.label), "", "text"),
-    tile("Faults caught at 5% false alarms", pct(det.val.recall), "baseline: 0%, it can only alarm on everything", "big"),
+    tile("Faults caught at 5% false alarms", pct(det.val.recall), `about 8–9% false alarms after a run's first hour (<a href="results.html#far-note">why</a>); baseline: 0%, it can only alarm on everything`, "big"),
     tile("Detection ROC-AUC", num(det.val.ROC_AUC, 3), `baseline ${num(detBase.val.ROC_AUC, 3)}`, "big"),
     tile("Best diagnosis model", esc(dia.label), "", "text"),
     tile("Diagnosis macro-F1", num(dia.val.macro_F1, 3), `baseline ${num(diaBase.val.macro_F1, 3)}`, "big"),

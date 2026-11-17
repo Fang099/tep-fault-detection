@@ -59,7 +59,8 @@ const STEPS = [
       el.querySelectorAll(".tour-q").forEach(b => b.addEventListener("click", () => {
         el.querySelectorAll(".tour-q").forEach(x => x.classList.toggle("on", x === b));
         $("t1-reveal").innerHTML = b.dataset.k === "det"
-          ? `The best model catches <b>${pct(D.det.val.recall)}</b> of faulty readings while raising a false alarm on only 5% of normal ones.
+          ? `The best model catches <b>${pct(D.det.val.recall)}</b> of faulty readings while raising a false alarm on 5% of normal ones
+             (about 8–9% once a run is past its first hour; see <a href="results.html#far-note">why</a>).
              <span class="tour-small">Detection is a trade-off: alarm more often and you catch more faults but also raise more false alarms.
              So the false alarms are fixed at 5%, and the question is how many faults are caught at that level.</span>`
           : `Once a fault is flagged, the best model names the right one for <b>${pct(D.dia.val.accuracy)}</b> of faulty readings.

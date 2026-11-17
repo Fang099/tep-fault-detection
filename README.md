@@ -159,8 +159,11 @@ The full list is on the website's Results page. The most important ones:
 
 - **The first hour of a run.** Every training fault starts after exactly one hour, so the models learn that the
   start of a run is always fault-free. Almost half of the normal validation rows come from that first hour, so
-  the 5% false alarm rate set on validation is an average of nearly 0% there and more afterwards; on the test
-  files, with the threshold unchanged, it is 7.4%. At an equal 5% false alarm rate the test recall matches
+  the 5% false alarm rate set on validation is an average of nearly 0% there and about 8–9% afterwards (inferred
+  from the data's make-up and one stored run; re-scoring by time in the run is future work). So every "at 5% false
+  alarms" figure, including the headline 86.8%, is really at about 8–9% during steady operation. On the test files,
+  with the threshold unchanged, it is 7.4%. The history windows are what reveal the first hour: they hold fewer
+  samples at the start of a run. At an equal 5% false alarm rate the test recall matches
   validation.
 - **Regularization was only studied in depth for logistic regression** (lasso, ridge and no penalty over eight
   strengths, chosen on one validation split). For the tree models only depth and the number of trees or rounds

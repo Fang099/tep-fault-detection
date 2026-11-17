@@ -97,10 +97,12 @@
     <h2>Limitations</h2>
     <p class="intro">What these results can and cannot claim, most important first.</p>
     <ul class="tight">
-      <li><b>The model has learned that the first hour of a run is fault-free.</b> In the training files every fault starts after
+      <li id="lim-first"><b>The model has learned that the first hour of a run is fault-free.</b> In the training files every fault starts after
         exactly one hour, so the first 20 samples of every run are always normal, and the models pick that up: they give the start of a
         run very low fault scores. Almost half of the normal validation rows come from that first hour, so the 5% false alarm rate
-        is an average of nearly 0% there and well above 5% afterwards. This is why the rate rises on the test files, where the first
+        is an average of nearly 0% there and about 8–9% afterwards, so every "at 5% false alarms" figure on this site is, during
+        steady operation, really at about 8–9%. The history inputs are what let the models recognize the first hour: their windows
+        hold fewer samples at the start of a run. This is why the rate rises on the test files, where the first
         hour is a small part of normal operation. The test files, where faults start after 8 hours instead of 1, show that catching faults does not
         depend on when the fault starts. What no file in the dataset can show is how the models would treat a fault that began
         within the first hour; they would probably be slow to flag it.
